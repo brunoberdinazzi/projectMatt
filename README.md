@@ -17,8 +17,9 @@ Matt automates that middle layer:
 2. normalize the relevant rows;
 3. persist the intake and metadata;
 4. enrich the context by scraping referenced pages;
-5. prepare a focused summary for AI generation;
-6. assemble the final report in a reusable template.
+5. review the extracted context before generation;
+6. prepare a focused summary for AI generation;
+7. assemble the final report in a reusable template.
 
 ## Core capabilities
 
@@ -27,6 +28,7 @@ Matt automates that middle layer:
 - Local AI generation with Ollama.
 - Remote AI generation with OpenAI-compatible APIs.
 - Link scraping with contextual classification.
+- Link scraping with evidence scoring, matched terms, prioritized links and controlled-depth crawling.
 - SQLite persistence for analyses, extracted items, scraped pages and summaries.
 - `DOCX` generation with template preservation.
 - `PDF` export for lightweight sharing.
@@ -73,6 +75,13 @@ The current extraction scope is intentionally narrow:
 
 That scope can be expanded later without changing the rest of the pipeline.
 
+The parser is now configurable per request through:
+
+- parser profiles such as `default`, `extended` and `full`;
+- explicit group overrides;
+- explicit status overrides;
+- sheet name and metadata row overrides.
+
 ## End-to-end flow
 
 ### 1. Intake
@@ -101,12 +110,24 @@ If source URLs are available, the backend scrapes those pages and stores:
 - page title;
 - final URL after redirects;
 - categorized links;
+- evidence score and matched terms for each relevant link;
+- discovered pages reached through high-value links;
 - surrounding context for each link;
 - a compact page summary.
 
-### 4. AI-ready summary
+### 4. Review
 
-The backend builds a consolidated summary from the database, so the model receives only:
+Before generating the report, the UI can request an analysis review payload showing:
+
+- extracted items;
+- parser warnings;
+- scraped pages and discovered links;
+- consolidated summary;
+- prompt preview.
+
+### 5. AI-ready summary
+
+After review, the backend builds a consolidated summary from the database, so the model receives only:
 
 - the relevant extracted rows;
 - the scraped context that matters;
@@ -115,7 +136,7 @@ The backend builds a consolidated summary from the database, so the model receiv
 The AI does not query the database directly. The backend retrieves and condenses the required
 context first.
 
-### 5. Report generation
+### 6. Report generation
 
 The report can be produced by:
 
@@ -199,12 +220,14 @@ backend/data/matt.db
 The database currently keeps:
 
 - analysis metadata;
+- parser options used for each analysis;
 - extracted checklist items;
 - item-level detail rows;
 - parser warnings;
 - scraped pages;
 - scraped links;
 - consolidated AI summaries.
+- generation audit trail with mode, provider, model, prompt snapshot and raw response.
 
 ## API overview
 
@@ -212,15 +235,24 @@ The database currently keeps:
 
 - `GET /`
 - `GET /health`
+- `GET /parser/profiles`
 - `GET /providers/ollama/models`
 - `GET /scrape/links`
+
+The scraper endpoint also accepts:
+
+- `crawl_depth`
+- `max_pages`
 
 ### Intake and persistence
 
 - `POST /analysis/intake`
+- `POST /analysis/review`
 - `GET /analysis/{analysis_id}`
 - `POST /analysis/{analysis_id}/scrape`
 - `GET /analysis/{analysis_id}/context`
+- `GET /analysis/{analysis_id}/generations`
+- `POST /analysis/{analysis_id}/report`
 
 ### Workbook and report pipeline
 
@@ -237,6 +269,11 @@ X-Analysis-ID
 ```
 
 That header identifies the persisted record associated with the generated report.
+
+The two-step workflow exposed in the frontend is now:
+
+1. upload and review with `POST /analysis/review`;
+2. generate from the stored analysis with `POST /analysis/{analysis_id}/report`.
 
 ## Link scraper
 

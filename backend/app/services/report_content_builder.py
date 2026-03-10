@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from ..models import ChecklistItem, ChecklistParseResult, ReportBuildRequest, ReportSection
+from ..models import (
+    ChecklistItem,
+    ChecklistParseResult,
+    GeneratedReportPayload,
+    GenerationTrace,
+    ReportBuildRequest,
+    ReportSection,
+)
 from .report_metadata import build_report_title
 
 
@@ -84,6 +91,9 @@ ITEM_SUBJECT_BY_CODE = {
 
 class ReportContentBuilder:
     def build(self, payload: ChecklistParseResult) -> ReportBuildRequest:
+        return self.build_with_trace(payload).report
+
+    def build_with_trace(self, payload: ChecklistParseResult) -> GeneratedReportPayload:
         grouped = self._group_by_source(payload.itens_processados)
         sections: list[ReportSection] = []
 
@@ -120,12 +130,25 @@ class ReportContentBuilder:
             )
         )
 
-        return ReportBuildRequest(
+        report = ReportBuildRequest(
             titulo_relatorio=build_report_title(payload),
             orgao=payload.orgao,
             tipo_orgao=payload.tipo_orgao,
             periodo_analise=payload.periodo_analise,
             secoes=sections,
+        )
+        return GeneratedReportPayload(
+            report=report,
+            trace=GenerationTrace(
+                requested_mode="rules",
+                used_mode="rules",
+                provider="rules",
+                model_name=None,
+                output_format="docx",
+                prompt_snapshot=None,
+                raw_response=None,
+                fallback_reason=None,
+            ),
         )
 
     def _group_by_source(self, items: list[ChecklistItem]) -> dict[str, list[ChecklistItem]]:
@@ -149,30 +172,32 @@ class ReportContentBuilder:
         return "\n\n".join(paragraphs)
 
     def _build_recommendations_text(self, source_key: str, items: list[ChecklistItem]) -> str:
-        if not items:
+        actionable_items = [item for item in items if item.status not in {"Sim", "Nao se aplica"}]
+        if not actionable_items:
             return (
                 f"Nao se identificaram recomendacoes tecnicas especificas para "
                 f"{SOURCE_LABELS[source_key]} no recorte automatizado atual."
             )
 
-        specialized_text = self._build_specialized_recommendations_text(source_key, items)
+        specialized_text = self._build_specialized_recommendations_text(source_key, actionable_items)
         if specialized_text:
             return specialized_text
 
-        paragraphs = [self._build_recommendation_paragraph(item) for item in items]
+        paragraphs = [self._build_recommendation_paragraph(item) for item in actionable_items]
         return "\n\n".join(paragraphs)
 
     def _build_summary_text(self, grouped: dict[str, list[ChecklistItem]]) -> str:
         all_items = [item for source_key in SOURCE_ORDER for item in grouped.get(source_key, [])]
-        if not all_items:
+        actionable_items = [item for item in all_items if item.status not in {"Sim", "Nao se aplica"}]
+        if not actionable_items:
             return (
-                "No recorte automatizado dos grupos 1 e 5, nao foram identificados apontamentos "
-                "classificados como Nao ou Parcialmente que demandem recomendacoes tecnicas."
+                "No recorte automatizado vigente, nao foram identificados apontamentos "
+                "que demandem recomendacoes tecnicas corretivas."
             )
 
         source_summaries = []
         for source_key in SOURCE_ORDER:
-            items = grouped.get(source_key, [])
+            items = [item for item in grouped.get(source_key, []) if item.status not in {"Sim", "Nao se aplica"}]
             if not items:
                 continue
             source_summaries.append(

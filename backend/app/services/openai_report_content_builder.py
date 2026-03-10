@@ -6,7 +6,13 @@ from typing import Optional
 
 from openai import OpenAI
 
-from ..models import ChecklistParseResult, ReportBuildRequest, ReportSection
+from ..models import (
+    ChecklistParseResult,
+    GeneratedReportPayload,
+    GenerationTrace,
+    ReportBuildRequest,
+    ReportSection,
+)
 from .report_metadata import build_report_title
 
 
@@ -18,6 +24,9 @@ class OpenAIReportContentBuilder:
         return bool(os.getenv("OPENAI_API_KEY"))
 
     def build(self, payload: ChecklistParseResult) -> ReportBuildRequest:
+        return self.build_with_trace(payload).report
+
+    def build_with_trace(self, payload: ChecklistParseResult) -> GeneratedReportPayload:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY nao configurada no servidor.")
@@ -31,12 +40,25 @@ class OpenAIReportContentBuilder:
         raw_text = getattr(response, "output_text", "") or ""
         data = self._parse_json(raw_text)
 
-        return ReportBuildRequest(
+        report = ReportBuildRequest(
             titulo_relatorio=build_report_title(payload),
             orgao=payload.orgao,
             tipo_orgao=payload.tipo_orgao,
             periodo_analise=payload.periodo_analise,
             secoes=[ReportSection(**section) for section in data["secoes"]],
+        )
+        return GeneratedReportPayload(
+            report=report,
+            trace=GenerationTrace(
+                requested_mode="ai",
+                used_mode="ai",
+                provider="openai",
+                model_name=self.model,
+                output_format="docx",
+                prompt_snapshot=prompt,
+                raw_response=raw_text,
+                fallback_reason=None,
+            ),
         )
 
     def _build_prompt(self, payload: ChecklistParseResult) -> str:
@@ -129,6 +151,7 @@ class OpenAIReportContentBuilder:
                 "tipo_orgao": payload.tipo_orgao,
                 "periodo_analise": payload.periodo_analise,
                 "grupos_permitidos": payload.grupos_permitidos,
+                "parser_options": payload.parser_options.model_dump(mode="json"),
                 "database_summary": payload.database_summary,
                 "scraped_pages": scraped_pages,
                 "warnings": payload.warnings,

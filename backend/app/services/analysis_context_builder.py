@@ -33,6 +33,11 @@ class AnalysisContextBuilder:
             f"Tipo de orgao: {parsed.tipo_orgao or 'nao informado'}.",
             f"Periodo da analise: {parsed.periodo_analise or 'nao informado'}.",
             f"SAT: {parsed.sat_numero or 'nao identificado'}.",
+            (
+                "Escopo do parser: perfil "
+                f"{parsed.parser_options.profile}, grupos {', '.join(parsed.parser_options.allowed_groups)}, "
+                f"status {', '.join(parsed.parser_options.allowed_status)}."
+            ),
         ]
         source_lines = []
         if parsed.site_url:
@@ -76,12 +81,13 @@ class AnalysisContextBuilder:
                 for category, count in category_counter.most_common(4)
             ) or "sem categorias relevantes"
             notable_links = self._notable_links(page.links)
+            page_origin = self._page_origin(page)
             line = (
-                f"- {SOURCE_LABELS.get(page.fonte, page.fonte)}: {page.summary} "
+                f"- {SOURCE_LABELS.get(page.fonte, page.fonte)}{page_origin}: {page.summary} "
                 f"Categorias principais: {top_categories}."
             )
             if notable_links:
-                line += " Links relevantes: " + " | ".join(notable_links) + "."
+                line += " Evidencias priorizadas: " + " | ".join(notable_links) + "."
             lines.append(line)
         return "\n".join(lines)
 
@@ -93,9 +99,13 @@ class AnalysisContextBuilder:
 
     def _notable_links(self, links: list[ScrapedLink]) -> list[str]:
         selected = []
-        for link in links:
+        ordered_links = sorted(links, key=lambda link: (-link.score, link.label.lower()))
+        for link in ordered_links:
             if link.category in {"portal_transparencia", "esic", "licitacoes", "contratos", "institucional"}:
-                selected.append(f"{link.label} -> {link.url}")
+                chunk = f"{link.label} [{link.score}]"
+                if link.evidence_summary:
+                    chunk += f": {link.evidence_summary}"
+                selected.append(chunk)
             if len(selected) >= 4:
                 break
         return selected
@@ -105,3 +115,14 @@ class AnalysisContextBuilder:
         if len(cleaned) <= limit:
             return cleaned
         return cleaned[: limit - 3].rstrip() + "..."
+
+    def _page_origin(self, page: ScrapedPageRecord) -> str:
+        if page.discovery_depth <= 0:
+            return ""
+        parts = [f" (profundidade {page.discovery_depth}"]
+        if page.discovered_from_label:
+            parts.append(f", via '{self._normalize_text(page.discovered_from_label, 80)}'")
+        if page.page_score:
+            parts.append(f", score {page.page_score}")
+        parts.append(")")
+        return "".join(parts)

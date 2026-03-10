@@ -9,6 +9,8 @@ from ..models import (
     ChecklistDetail,
     ChecklistItem,
     ChecklistParseResult,
+    GenerationTrace,
+    ParserOptions,
     ScrapedLink,
     ScrapedPageRecord,
 )
@@ -52,10 +54,11 @@ class AnalysisStore:
                     relatorio_contabil_referencia,
                     fontes_disponiveis_json,
                     grupos_permitidos_json,
+                    parser_options_json,
                     generation_mode,
                     output_format,
                     database_summary
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_filename,
@@ -77,6 +80,7 @@ class AnalysisStore:
                     parsed.relatorio_contabil_referencia,
                     json.dumps(parsed.fontes_disponiveis),
                     json.dumps(parsed.grupos_permitidos),
+                    parsed.parser_options.model_dump_json(),
                     generation_mode,
                     output_format,
                     parsed.database_summary,
@@ -120,6 +124,7 @@ class AnalysisStore:
                     relatorio_contabil_referencia = ?,
                     fontes_disponiveis_json = ?,
                     grupos_permitidos_json = ?,
+                    parser_options_json = ?,
                     generation_mode = COALESCE(?, generation_mode),
                     output_format = COALESCE(?, output_format),
                     database_summary = ?
@@ -144,6 +149,7 @@ class AnalysisStore:
                     parsed.relatorio_contabil_referencia,
                     json.dumps(parsed.fontes_disponiveis),
                     json.dumps(parsed.grupos_permitidos),
+                    parsed.parser_options.model_dump_json(),
                     generation_mode,
                     output_format,
                     parsed.database_summary,
@@ -167,6 +173,78 @@ class AnalysisStore:
         with self._connect() as conn:
             self._replace_scraped_pages(conn, analysis_id, pages)
             conn.commit()
+
+    def record_generation(
+        self,
+        analysis_id: int,
+        trace: GenerationTrace,
+    ) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO analysis_generations (
+                    analysis_id,
+                    requested_mode,
+                    used_mode,
+                    provider,
+                    model_name,
+                    output_format,
+                    prompt_snapshot,
+                    raw_response,
+                    fallback_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    analysis_id,
+                    trace.requested_mode,
+                    trace.used_mode,
+                    trace.provider,
+                    trace.model_name,
+                    trace.output_format,
+                    trace.prompt_snapshot,
+                    trace.raw_response,
+                    trace.fallback_reason,
+                ),
+            )
+            conn.commit()
+            return int(cursor.lastrowid)
+
+    def list_generations(self, analysis_id: int) -> list[GenerationTrace]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    id,
+                    requested_mode,
+                    used_mode,
+                    provider,
+                    model_name,
+                    output_format,
+                    prompt_snapshot,
+                    raw_response,
+                    fallback_reason,
+                    created_at
+                FROM analysis_generations
+                WHERE analysis_id = ?
+                ORDER BY id DESC
+                """,
+                (analysis_id,),
+            ).fetchall()
+        return [
+            GenerationTrace(
+                id=row["id"],
+                requested_mode=row["requested_mode"],
+                used_mode=row["used_mode"],
+                provider=row["provider"],
+                model_name=row["model_name"],
+                output_format=row["output_format"],
+                prompt_snapshot=row["prompt_snapshot"],
+                raw_response=row["raw_response"],
+                fallback_reason=row["fallback_reason"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
 
     def get_analysis(self, analysis_id: int) -> Optional[ChecklistParseResult]:
         with self._connect() as conn:
@@ -197,6 +275,7 @@ class AnalysisStore:
                 relatorio_contabil_referencia=analysis_row["relatorio_contabil_referencia"],
                 fontes_disponiveis=self._load_json_list(analysis_row["fontes_disponiveis_json"]),
                 grupos_permitidos=self._load_json_list(analysis_row["grupos_permitidos_json"]) or ["1", "5"],
+                parser_options=self._load_parser_options(analysis_row["parser_options_json"]),
                 database_summary=analysis_row["database_summary"],
                 warnings=[
                     row["warning"]
@@ -242,6 +321,7 @@ class AnalysisStore:
                     relatorio_contabil_referencia TEXT,
                     fontes_disponiveis_json TEXT,
                     grupos_permitidos_json TEXT,
+                    parser_options_json TEXT,
                     generation_mode TEXT,
                     output_format TEXT,
                     database_summary TEXT
@@ -289,6 +369,10 @@ class AnalysisStore:
                     final_url TEXT NOT NULL,
                     page_title TEXT,
                     summary TEXT NOT NULL,
+                    discovery_depth INTEGER NOT NULL DEFAULT 0,
+                    page_score INTEGER NOT NULL DEFAULT 0,
+                    discovered_from_url TEXT,
+                    discovered_from_label TEXT,
                     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
                 );
 
@@ -309,10 +393,36 @@ class AnalysisStore:
                     context TEXT,
                     section TEXT,
                     is_internal INTEGER NOT NULL DEFAULT 0,
+                    score INTEGER NOT NULL DEFAULT 0,
+                    matched_terms_json TEXT,
+                    evidence_summary TEXT,
                     FOREIGN KEY (page_id) REFERENCES scraped_pages(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS analysis_generations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    analysis_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    requested_mode TEXT NOT NULL,
+                    used_mode TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model_name TEXT,
+                    output_format TEXT NOT NULL,
+                    prompt_snapshot TEXT,
+                    raw_response TEXT,
+                    fallback_reason TEXT,
+                    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
                 );
                 """
             )
+            self._ensure_column(conn, "analyses", "parser_options_json", "TEXT")
+            self._ensure_column(conn, "scraped_pages", "discovery_depth", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "scraped_pages", "page_score", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "scraped_pages", "discovered_from_url", "TEXT")
+            self._ensure_column(conn, "scraped_pages", "discovered_from_label", "TEXT")
+            self._ensure_column(conn, "scraped_links", "score", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "scraped_links", "matched_terms_json", "TEXT")
+            self._ensure_column(conn, "scraped_links", "evidence_summary", "TEXT")
             conn.commit()
 
     def _replace_warnings(
@@ -425,8 +535,12 @@ class AnalysisStore:
                     requested_url,
                     final_url,
                     page_title,
-                    summary
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    summary,
+                    discovery_depth,
+                    page_score,
+                    discovered_from_url,
+                    discovered_from_label
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     analysis_id,
@@ -435,6 +549,10 @@ class AnalysisStore:
                     page.final_url,
                     page.page_title,
                     page.summary,
+                    page.discovery_depth,
+                    page.page_score,
+                    page.discovered_from_url,
+                    page.discovered_from_label,
                 ),
             )
             page_id = int(cursor.lastrowid)
@@ -452,8 +570,11 @@ class AnalysisStore:
                     destination_type,
                     context,
                     section,
-                    is_internal
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    is_internal,
+                    score,
+                    matched_terms_json,
+                    evidence_summary
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -465,6 +586,9 @@ class AnalysisStore:
                         link.context,
                         link.section,
                         1 if link.is_internal else 0,
+                        link.score,
+                        json.dumps(link.matched_terms),
+                        link.evidence_summary,
                     )
                     for link in page.links
                 ],
@@ -530,6 +654,10 @@ class AnalysisStore:
                     final_url=page_row["final_url"],
                     page_title=page_row["page_title"],
                     summary=page_row["summary"],
+                    discovery_depth=int(page_row["discovery_depth"] or 0),
+                    page_score=int(page_row["page_score"] or 0),
+                    discovered_from_url=page_row["discovered_from_url"],
+                    discovered_from_label=page_row["discovered_from_label"],
                     links=[
                         ScrapedLink(
                             label=link_row["label"],
@@ -539,6 +667,9 @@ class AnalysisStore:
                             context=link_row["context"],
                             section=link_row["section"],
                             is_internal=bool(link_row["is_internal"]),
+                            score=int(link_row["score"] or 0),
+                            matched_terms=self._load_json_list(link_row["matched_terms_json"]),
+                            evidence_summary=link_row["evidence_summary"],
                         )
                         for link_row in link_rows
                     ],
@@ -550,7 +681,30 @@ class AnalysisStore:
     def _load_json_list(self, value: Optional[str]) -> list[str]:
         if not value:
             return []
-        loaded = json.loads(value)
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
         if isinstance(loaded, list):
             return [str(item) for item in loaded]
         return []
+
+    def _load_parser_options(self, value: Optional[str]) -> ParserOptions:
+        if not value:
+            return ParserOptions()
+        try:
+            return ParserOptions.model_validate_json(value)
+        except ValueError:
+            return ParserOptions()
+
+    def _ensure_column(
+        self,
+        conn: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_definition: str,
+    ) -> None:
+        columns = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        if any(column["name"] == column_name for column in columns):
+            return
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")

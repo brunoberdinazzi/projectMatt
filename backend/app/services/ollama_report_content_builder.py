@@ -7,7 +7,13 @@ from typing import Optional
 
 import httpx
 
-from ..models import ChecklistParseResult, ReportBuildRequest, ReportSection
+from ..models import (
+    ChecklistParseResult,
+    GeneratedReportPayload,
+    GenerationTrace,
+    ReportBuildRequest,
+    ReportSection,
+)
 from .report_metadata import build_report_title
 
 
@@ -34,6 +40,13 @@ class OllamaReportContentBuilder:
         payload: ChecklistParseResult,
         model_override: Optional[str] = None,
     ) -> ReportBuildRequest:
+        return self.build_with_trace(payload, model_override=model_override).report
+
+    def build_with_trace(
+        self,
+        payload: ChecklistParseResult,
+        model_override: Optional[str] = None,
+    ) -> GeneratedReportPayload:
         model_name = self._resolve_model(model_override)
         prompt = self._build_prompt(payload)
         body = {
@@ -54,12 +67,25 @@ class OllamaReportContentBuilder:
         raw_text = data.get("response", "").strip()
         parsed = self._parse_json(raw_text)
 
-        return ReportBuildRequest(
+        report = ReportBuildRequest(
             titulo_relatorio=build_report_title(payload),
             orgao=payload.orgao,
             tipo_orgao=payload.tipo_orgao,
             periodo_analise=payload.periodo_analise,
             secoes=[ReportSection(**section) for section in parsed["secoes"]],
+        )
+        return GeneratedReportPayload(
+            report=report,
+            trace=GenerationTrace(
+                requested_mode="local",
+                used_mode="local",
+                provider="ollama",
+                model_name=model_name,
+                output_format="docx",
+                prompt_snapshot=prompt,
+                raw_response=raw_text,
+                fallback_reason=None,
+            ),
         )
 
     def _build_prompt(self, payload: ChecklistParseResult) -> str:
@@ -127,6 +153,7 @@ class OllamaReportContentBuilder:
             "orgao": payload.orgao,
             "tipo_orgao": payload.tipo_orgao,
             "periodo_analise": payload.periodo_analise,
+            "parser_options": payload.parser_options.model_dump(mode="json"),
             "database_summary": payload.database_summary,
             "scraped_pages": scraped_pages,
             "warnings": payload.warnings,

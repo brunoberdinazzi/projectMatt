@@ -16,6 +16,7 @@ FONTE_LABELS = {
 class PromptBuilder:
     def build(self, payload: ChecklistParseResult) -> str:
         grouped = self._group_by_source(payload.itens_processados)
+        allowed_status = ", ".join(payload.parser_options.allowed_status)
 
         metadata_lines = [
             "Voce e um redator tecnico responsavel por redigir trechos de um relatorio tecnico sobre transparencia publica.",
@@ -23,7 +24,7 @@ class PromptBuilder:
             "Nao invente fatos, nao complemente dados ausentes e nao afirme cumprimento quando o registro indicar problema.",
             "Escreva em portugues formal, objetiva, impessoal e compatível com relatórios técnicos administrativos.",
             "Organize a resposta por fonte de consulta.",
-            "Considere apenas apontamentos com status Nao ou Parcialmente.",
+            f"Considere apenas apontamentos com status: {allowed_status}.",
             "Quando houver observacao, ela deve ser o principal fundamento do texto.",
             "Quando nao houver observacao, redija de forma conservadora com base apenas na descricao do item e no status.",
             "Nao cite anexos, figuras ou evidencias visuais que nao tenham sido fornecidos no prompt.",

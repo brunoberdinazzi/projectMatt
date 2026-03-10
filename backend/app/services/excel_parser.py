@@ -9,7 +9,15 @@ from typing import Optional, Tuple
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
-from ..models import ChecklistDetail, ChecklistItem, ChecklistParseResult, FonteType, StatusType
+from ..models import (
+    ChecklistDetail,
+    ChecklistItem,
+    ChecklistParseResult,
+    FonteType,
+    ParserOptions,
+    ParserProfileDefinition,
+    StatusType,
+)
 
 STATUS_MAP = {
     "sim": "Sim",
@@ -24,12 +32,38 @@ STATUS_MAP = {
 
 RESPONSE_HEADER_RE = re.compile(r"resposta\s*\[(\d{4})\]", re.IGNORECASE)
 DETAIL_COLUMN_PAIRS = (("D", "E"), ("G", "H"), ("J", "K"), ("M", "N"), ("P", "Q"))
+DEFAULT_ALLOWED_GROUPS = ("1", "5")
+DEFAULT_ALLOWED_STATUS = ("Nao", "Parcialmente")
+PARSER_PROFILE_MAP = {
+    "default": ParserProfileDefinition(
+        key="default",
+        label="Default",
+        description="Recorte padrao: grupos 1 e 5 com itens Nao ou Parcialmente.",
+        allowed_groups=["1", "5"],
+        allowed_status=["Nao", "Parcialmente"],
+    ),
+    "extended": ParserProfileDefinition(
+        key="extended",
+        label="Extended",
+        description="Checklist ampliado: grupos 1 a 5, mantendo foco em Nao ou Parcialmente.",
+        allowed_groups=["1", "2", "3", "4", "5"],
+        allowed_status=["Nao", "Parcialmente"],
+    ),
+    "full": ParserProfileDefinition(
+        key="full",
+        label="Full",
+        description="Checklist completo: grupos 1 a 5 e todos os status normalizados.",
+        allowed_groups=["1", "2", "3", "4", "5"],
+        allowed_status=["Sim", "Nao", "Parcialmente", "Nao se aplica"],
+    ),
+}
 
 
 @dataclass
 class ParserConfig:
-    allowed_groups: set[str] = field(default_factory=lambda: {"1", "5"})
-    allowed_status: set[str] = field(default_factory=lambda: {"Nao", "Parcialmente"})
+    profile: str = "default"
+    allowed_groups: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_GROUPS))
+    allowed_status: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_STATUS))
     checklist_sheet_name: str = "Checklist"
     metadata_row: int = 5
 
@@ -39,7 +73,16 @@ class ChecklistParser:
         self.config = config
 
     def parse(self, workbook_path: Path, source_name: Optional[str] = None) -> ChecklistParseResult:
-        result = ChecklistParseResult(grupos_permitidos=sorted(self.config.allowed_groups))
+        result = ChecklistParseResult(
+            grupos_permitidos=sorted(self.config.allowed_groups),
+            parser_options=ParserOptions(
+                profile=self.config.profile,
+                allowed_groups=sorted(self.config.allowed_groups),
+                allowed_status=sorted(self.config.allowed_status),
+                checklist_sheet_name=self.config.checklist_sheet_name,
+                metadata_row=self.config.metadata_row,
+            ),
+        )
         workbook = load_workbook(workbook_path, read_only=True, data_only=True)
         sheet = self._resolve_checklist_sheet(workbook)
         if sheet is None:
@@ -229,8 +272,8 @@ class ChecklistParser:
             status not in self.config.allowed_status for _, status in allowed_group_statuses
         ):
             warnings.append(
-                "Nos grupos 1 e 5, os itens avaliados na planilha estao marcados como Sim ou N/A; "
-                "por isso nao entraram no recorte automatizado de Nao/Parcialmente."
+                f"Nos grupos {', '.join(sorted(self.config.allowed_groups))}, os itens avaliados na planilha "
+                f"estao fora do recorte automatizado de status {', '.join(sorted(self.config.allowed_status))}."
             )
 
         out_of_scope_observations = sorted(
@@ -243,7 +286,7 @@ class ChecklistParser:
         if out_of_scope_observations:
             warnings.append(
                 "Foram encontradas observacoes apenas para itens fora do escopo automatizado atual "
-                f"(grupos 1 e 5): {', '.join(out_of_scope_observations)}."
+                f"(grupos {', '.join(sorted(self.config.allowed_groups))}): {', '.join(out_of_scope_observations)}."
             )
 
     def _select_reference_status(
@@ -462,6 +505,50 @@ def _normalize_fonte(value: Optional[str]) -> FonteType:
     if "site" in normalized or "orgao" in normalized or "institucional" in normalized:
         return "site_orgao"
     return "nao_informada"
+
+
+def list_parser_profiles() -> list[ParserProfileDefinition]:
+    return list(PARSER_PROFILE_MAP.values())
+
+
+def build_parser_config(
+    profile: Optional[str] = None,
+    allowed_groups_text: Optional[str] = None,
+    allowed_status_text: Optional[str] = None,
+    checklist_sheet_name: Optional[str] = None,
+    metadata_row: Optional[int] = None,
+) -> ParserConfig:
+    normalized_profile = (profile or "default").strip().lower() or "default"
+    profile_definition = PARSER_PROFILE_MAP.get(normalized_profile, PARSER_PROFILE_MAP["default"])
+
+    allowed_groups = _parse_csv_values(allowed_groups_text) or profile_definition.allowed_groups
+    normalized_groups = sorted({group.strip() for group in allowed_groups if group.strip()})
+
+    status_values = _parse_csv_values(allowed_status_text) or profile_definition.allowed_status
+    normalized_statuses = _normalize_allowed_statuses(status_values) or profile_definition.allowed_status
+
+    return ParserConfig(
+        profile=profile_definition.key,
+        allowed_groups=set(normalized_groups or DEFAULT_ALLOWED_GROUPS),
+        allowed_status=set(normalized_statuses or DEFAULT_ALLOWED_STATUS),
+        checklist_sheet_name=(checklist_sheet_name or "Checklist").strip() or "Checklist",
+        metadata_row=max(1, int(metadata_row or 5)),
+    )
+
+
+def _parse_csv_values(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _normalize_allowed_statuses(values: list[str]) -> list[StatusType]:
+    normalized: list[StatusType] = []
+    for value in values:
+        status = _normalize_status(value)
+        if status and status not in normalized:
+            normalized.append(status)
+    return normalized
 
 
 def _observation_expression_matches(expression: str, item_code: str) -> bool:

@@ -6,7 +6,23 @@ from pydantic import BaseModel, Field
 
 
 FonteType = Literal["site_orgao", "portal_transparencia", "esic", "nao_informada"]
-StatusType = Literal["Nao", "Parcialmente"]
+StatusType = Literal["Sim", "Nao", "Parcialmente", "Nao se aplica"]
+
+
+class ParserOptions(BaseModel):
+    profile: str = "default"
+    allowed_groups: list[str] = Field(default_factory=lambda: ["1", "5"])
+    allowed_status: list[StatusType] = Field(default_factory=lambda: ["Nao", "Parcialmente"])
+    checklist_sheet_name: str = "Checklist"
+    metadata_row: int = Field(default=5, ge=1)
+
+
+class ParserProfileDefinition(BaseModel):
+    key: str
+    label: str
+    description: str
+    allowed_groups: list[str] = Field(default_factory=list)
+    allowed_status: list[StatusType] = Field(default_factory=list)
 
 
 class ChecklistDetail(BaseModel):
@@ -51,6 +67,7 @@ class ChecklistParseResult(BaseModel):
     relatorio_contabil_referencia: Optional[str] = None
     fontes_disponiveis: list[FonteType] = Field(default_factory=list)
     grupos_permitidos: list[str] = Field(default_factory=lambda: ["1", "5"])
+    parser_options: ParserOptions = Field(default_factory=ParserOptions)
     itens_processados: list[ChecklistItem] = Field(default_factory=list)
     scraped_pages: list["ScrapedPageRecord"] = Field(default_factory=list)
     database_summary: Optional[str] = None
@@ -74,6 +91,9 @@ class ScrapedLink(BaseModel):
     context: Optional[str] = None
     section: Optional[str] = None
     is_internal: bool = False
+    score: int = 0
+    matched_terms: list[str] = Field(default_factory=list)
+    evidence_summary: Optional[str] = None
 
 
 class ScrapePageResult(BaseModel):
@@ -82,6 +102,7 @@ class ScrapePageResult(BaseModel):
     page_title: Optional[str] = None
     summary: str
     links: list[ScrapedLink] = Field(default_factory=list)
+    discovered_pages: list["ScrapedPageRecord"] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -92,6 +113,10 @@ class ScrapedPageRecord(BaseModel):
     page_title: Optional[str] = None
     summary: str
     links: list[ScrapedLink] = Field(default_factory=list)
+    discovery_depth: int = 0
+    page_score: int = 0
+    discovered_from_url: Optional[str] = None
+    discovered_from_label: Optional[str] = None
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -105,10 +130,43 @@ class AnalysisContextResponse(BaseModel):
     summary: str
 
 
+class AnalysisReviewStats(BaseModel):
+    extracted_item_count: int = 0
+    warning_count: int = 0
+    scraped_page_count: int = 0
+    scraped_link_count: int = 0
+
+
+class AnalysisReviewResponse(BaseModel):
+    analysis_id: int
+    parsed: ChecklistParseResult
+    summary: str
+    prompt_preview: str
+    stats: AnalysisReviewStats
+
+
 class ReportSection(BaseModel):
     fonte: FonteType
     titulo: str
     texto: str
+
+
+class GenerationTrace(BaseModel):
+    id: Optional[int] = None
+    requested_mode: str
+    used_mode: str
+    provider: str
+    model_name: Optional[str] = None
+    output_format: str
+    prompt_snapshot: Optional[str] = None
+    raw_response: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class GeneratedReportPayload(BaseModel):
+    report: "ReportBuildRequest"
+    trace: GenerationTrace
 
 
 class ReportBuildRequest(BaseModel):
@@ -134,3 +192,5 @@ class ReportBuildRequest(BaseModel):
 
 ChecklistParseResult.model_rebuild()
 StoredAnalysisResponse.model_rebuild()
+AnalysisReviewResponse.model_rebuild()
+GeneratedReportPayload.model_rebuild()

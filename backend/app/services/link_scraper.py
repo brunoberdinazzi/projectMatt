@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urljoin, urlparse
@@ -8,20 +8,20 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from ..models import ScrapedLink, ScrapePageResult
+from ..models import ScrapedLink, ScrapePageResult, ScrapedPageRecord
 
 
 CATEGORY_RULES = (
-    ("esic", ("e-sic", "esic", "pedido de informacao", "pedido de informacao", "sic")),
-    ("portal_transparencia", ("portal da transparencia", "transparencia", "transparencia publica")),
-    ("licitacoes", ("licitacao", "licitacoes", "pregao", "edital", "pncp", "contratacao")),
+    ("esic", ("e-sic", "esic", "pedido de informacao", "pedido de informação", "sic")),
+    ("portal_transparencia", ("portal da transparencia", "portal da transparência", "transparencia", "transparência publica")),
+    ("licitacoes", ("licitacao", "licitações", "licitacoes", "pregao", "edital", "pncp", "contratacao")),
     ("contratos", ("contrato", "contratos", "ata de registro", "aditivo")),
     ("obras", ("obra", "obras", "engenharia")),
     ("despesas", ("despesa", "despesas", "empenho", "pagamento", "credor")),
-    ("receitas", ("receita", "receitas", "arrecadacao")),
-    ("servidores", ("servidor", "servidores", "folha", "remuneracao", "cargo")),
-    ("legislacao", ("lei", "legislacao", "decreto", "norma", "regulamento")),
-    ("institucional", ("secretaria", "organograma", "estrutura", "competencia", "institucional")),
+    ("receitas", ("receita", "receitas", "arrecadacao", "arrecadação")),
+    ("servidores", ("servidor", "servidores", "folha", "remuneracao", "remuneração", "cargo")),
+    ("legislacao", ("lei", "legislacao", "legislação", "decreto", "norma", "regulamento")),
+    ("institucional", ("secretaria", "organograma", "estrutura", "competencia", "competência", "institucional")),
     ("ouvidoria", ("ouvidoria", "fale conosco", "contato", "telefone")),
     ("faq", ("perguntas frequentes", "faq")),
 )
@@ -38,14 +38,56 @@ FILE_TYPE_MAP = {
     ".zip": "arquivo",
 }
 
+CATEGORY_PRIORITY = {
+    "portal_transparencia": 42,
+    "esic": 40,
+    "institucional": 28,
+    "licitacoes": 24,
+    "contratos": 22,
+    "despesas": 20,
+    "receitas": 20,
+    "servidores": 18,
+    "legislacao": 18,
+    "obras": 16,
+    "ouvidoria": 14,
+    "faq": 12,
+    "outros": 8,
+}
+
+FOLLOWABLE_CATEGORIES = {
+    "portal_transparencia",
+    "esic",
+    "institucional",
+    "licitacoes",
+    "contratos",
+    "despesas",
+    "receitas",
+    "servidores",
+    "legislacao",
+    "obras",
+    "ouvidoria",
+    "faq",
+}
+
 
 @dataclass
 class LinkScraperConfig:
     timeout_seconds: float = 20.0
     max_links: int = 60
-    user_agent: str = (
-        "MattLinkScraper/0.1 (+https://localhost; projeto de avaliacao de portais da transparencia)"
-    )
+    crawl_depth: int = 1
+    crawl_max_pages: int = 4
+    follow_score_threshold: int = 38
+    user_agent: str = "MattLinkScraper/0.3 (+https://localhost; spreadsheet to report)"
+
+
+@dataclass
+class _FetchResult:
+    requested_url: str
+    final_url: str
+    page_title: Optional[str]
+    summary: str
+    links: list[ScrapedLink]
+    warnings: list[str]
 
 
 class LinkScraper:
@@ -55,15 +97,133 @@ class LinkScraper:
     def scrape(self, url: str, max_links: Optional[int] = None) -> ScrapePageResult:
         requested_url = self._normalize_requested_url(url)
         limit = max_links or self.config.max_links
+        with self._client() as client:
+            root = self._fetch_page(client, requested_url, limit)
+        return ScrapePageResult(
+            requested_url=root.requested_url,
+            final_url=root.final_url,
+            page_title=root.page_title,
+            summary=root.summary,
+            links=root.links,
+            warnings=root.warnings,
+        )
 
-        headers = {"User-Agent": self.config.user_agent}
-        with httpx.Client(
+    def crawl(
+        self,
+        url: str,
+        max_links: Optional[int] = None,
+        max_depth: Optional[int] = None,
+        max_pages: Optional[int] = None,
+    ) -> ScrapePageResult:
+        requested_url = self._normalize_requested_url(url)
+        limit = max_links or self.config.max_links
+        depth_limit = self.config.crawl_depth if max_depth is None else max(0, max_depth)
+        page_limit = self.config.crawl_max_pages if max_pages is None else max(0, max_pages)
+
+        with self._client() as client:
+            root = self._fetch_page(client, requested_url, limit)
+            discovered_pages = self._crawl_related_pages(
+                client=client,
+                root=root,
+                max_links=limit,
+                max_depth=depth_limit,
+                max_pages=page_limit,
+            )
+
+        summary = root.summary
+        if discovered_pages:
+            summary += f" Foram aprofundadas {len(discovered_pages)} pagina(s) adicional(is) relevantes."
+
+        return ScrapePageResult(
+            requested_url=root.requested_url,
+            final_url=root.final_url,
+            page_title=root.page_title,
+            summary=summary,
+            links=root.links,
+            discovered_pages=discovered_pages,
+            warnings=root.warnings,
+        )
+
+    def _crawl_related_pages(
+        self,
+        client: httpx.Client,
+        root: _FetchResult,
+        max_links: int,
+        max_depth: int,
+        max_pages: int,
+    ) -> list[ScrapedPageRecord]:
+        if max_depth <= 0 or max_pages <= 0:
+            return []
+
+        root_host = urlparse(root.final_url).netloc.lower()
+        queue = deque(
+            (link, 1, root.final_url)
+            for link in self._candidate_follow_links(root.links, root_host)
+        )
+        seen_urls = {root.final_url}
+        discovered: list[ScrapedPageRecord] = []
+
+        while queue and len(discovered) < max_pages:
+            link, depth, parent_url = queue.popleft()
+            if link.url in seen_urls:
+                continue
+            seen_urls.add(link.url)
+
+            try:
+                fetched = self._fetch_page(client, link.url, max_links)
+            except httpx.HTTPError:
+                continue
+
+            page_record = ScrapedPageRecord(
+                requested_url=fetched.requested_url,
+                final_url=fetched.final_url,
+                page_title=fetched.page_title,
+                summary=fetched.summary,
+                links=fetched.links,
+                warnings=fetched.warnings,
+                discovery_depth=depth,
+                page_score=link.score,
+                discovered_from_url=parent_url,
+                discovered_from_label=link.label,
+            )
+            discovered.append(page_record)
+
+            if depth >= max_depth:
+                continue
+
+            next_host = urlparse(fetched.final_url).netloc.lower() or root_host
+            for next_link in self._candidate_follow_links(fetched.links, next_host):
+                if next_link.url in seen_urls:
+                    continue
+                queue.append((next_link, depth + 1, fetched.final_url))
+
+        return discovered
+
+    def _candidate_follow_links(self, links: list[ScrapedLink], root_host: str) -> list[ScrapedLink]:
+        selected: list[ScrapedLink] = []
+        for link in sorted(links, key=self._sort_key):
+            if link.destination_type != "pagina":
+                continue
+            if link.category not in FOLLOWABLE_CATEGORIES:
+                continue
+            if link.score < self.config.follow_score_threshold:
+                continue
+            target_host = urlparse(link.url).netloc.lower()
+            if target_host and target_host != root_host and link.category not in {"portal_transparencia", "esic"}:
+                continue
+            selected.append(link)
+        return selected
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(
             follow_redirects=True,
             timeout=self.config.timeout_seconds,
-            headers=headers,
-        ) as client:
-            response = client.get(requested_url)
-            response.raise_for_status()
+            headers={"User-Agent": self.config.user_agent},
+        )
+
+    def _fetch_page(self, client: httpx.Client, requested_url: str, limit: int) -> _FetchResult:
+        response = client.get(requested_url)
+        response.raise_for_status()
 
         final_url = str(response.url)
         content_type = (response.headers.get("content-type") or "").lower()
@@ -80,7 +240,7 @@ class LinkScraper:
         if not links:
             warnings.append("Nenhum link navegavel foi identificado na pagina informada.")
 
-        return ScrapePageResult(
+        return _FetchResult(
             requested_url=requested_url,
             final_url=final_url,
             page_title=page_title,
@@ -106,8 +266,7 @@ class LinkScraper:
         return None
 
     def _extract_links(self, soup: BeautifulSoup, base_url: str, limit: int) -> list[ScrapedLink]:
-        results: list[ScrapedLink] = []
-        seen: set[tuple[str, str]] = set()
+        results_by_url: dict[str, ScrapedLink] = {}
         base_host = urlparse(base_url).netloc.lower()
 
         for anchor in soup.find_all("a", href=True):
@@ -117,34 +276,52 @@ class LinkScraper:
 
             absolute_url = urljoin(base_url, href)
             label = self._link_label(anchor, absolute_url)
-            dedupe_key = (absolute_url, label.lower())
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-
             section = self._nearest_section_heading(anchor)
             context = self._context_text(anchor, label)
-            category = self._categorize_link(label, absolute_url, context, section)
+            category, matched_terms = self._categorize_link(label, absolute_url, context, section)
             destination_type = self._destination_type(absolute_url)
             target_host = urlparse(absolute_url).netloc.lower()
-
-            results.append(
-                ScrapedLink(
-                    label=label,
-                    url=absolute_url,
+            is_internal = not target_host or target_host == base_host
+            score = self._score_link(
+                category=category,
+                destination_type=destination_type,
+                is_internal=is_internal,
+                matched_terms=matched_terms,
+                section=section,
+                context=context,
+            )
+            candidate = ScrapedLink(
+                label=label,
+                url=absolute_url,
+                category=category,
+                destination_type=destination_type,
+                context=context,
+                section=section,
+                is_internal=is_internal,
+                score=score,
+                matched_terms=matched_terms,
+                evidence_summary=self._build_evidence_summary(
                     category=category,
                     destination_type=destination_type,
-                    context=context,
+                    is_internal=is_internal,
+                    matched_terms=matched_terms,
                     section=section,
-                    is_internal=(not target_host or target_host == base_host),
-                )
+                ),
             )
 
-            if len(results) >= limit:
-                break
+            existing = results_by_url.get(absolute_url)
+            if existing is None or self._is_better_link(candidate, existing):
+                results_by_url[absolute_url] = candidate
 
-        results.sort(key=self._sort_key)
-        return results
+        results = sorted(results_by_url.values(), key=self._sort_key)
+        return results[:limit]
+
+    def _is_better_link(self, candidate: ScrapedLink, existing: ScrapedLink) -> bool:
+        if candidate.score != existing.score:
+            return candidate.score > existing.score
+        if len(candidate.matched_terms) != len(existing.matched_terms):
+            return len(candidate.matched_terms) > len(existing.matched_terms)
+        return len(candidate.label) > len(existing.label)
 
     def _should_skip_href(self, href: str) -> bool:
         lowered = href.lower()
@@ -191,12 +368,18 @@ class LinkScraper:
         candidates = []
         for candidate in (anchor.parent, anchor.parent.parent if anchor.parent else None):
             if isinstance(candidate, Tag):
+                if candidate.name in {"body", "html"}:
+                    continue
                 text = " ".join(candidate.get_text(" ", strip=True).split())
                 if text:
                     candidates.append(text)
 
         for text in candidates:
             if text == label:
+                continue
+            if label and label not in text:
+                continue
+            if len(text) > max(180, len(label) + 120):
                 continue
             if len(text) > 260:
                 text = text[:257].rstrip() + "..."
@@ -209,14 +392,18 @@ class LinkScraper:
         absolute_url: str,
         context: Optional[str],
         section: Optional[str],
-    ) -> str:
-        haystack = " ".join(
-            part for part in [label, absolute_url, context or "", section or ""] if part
-        ).lower()
+    ) -> tuple[str, list[str]]:
+        primary_haystack = " ".join(part for part in [label, absolute_url] if part).lower()
+        secondary_haystack = " ".join(part for part in [context or "", section or ""] if part).lower()
         for category, keywords in CATEGORY_RULES:
-            if any(keyword in haystack for keyword in keywords):
-                return category
-        return "outros"
+            matched_terms = [keyword for keyword in keywords if keyword in primary_haystack]
+            if matched_terms:
+                return category, matched_terms
+        for category, keywords in CATEGORY_RULES:
+            matched_terms = [keyword for keyword in keywords if keyword in secondary_haystack]
+            if matched_terms:
+                return category, matched_terms
+        return "outros", []
 
     def _destination_type(self, absolute_url: str) -> str:
         lowered = absolute_url.lower()
@@ -224,6 +411,46 @@ class LinkScraper:
             if lowered.endswith(suffix):
                 return label
         return "pagina"
+
+    def _score_link(
+        self,
+        category: str,
+        destination_type: str,
+        is_internal: bool,
+        matched_terms: list[str],
+        section: Optional[str],
+        context: Optional[str],
+    ) -> int:
+        score = CATEGORY_PRIORITY.get(category, CATEGORY_PRIORITY["outros"])
+        score += 12 if is_internal else 4
+        score += min(len(matched_terms) * 4, 12)
+        if section:
+            score += 5
+        if context:
+            score += 3
+        if destination_type in {"pdf", "csv", "planilha", "documento"}:
+            score += 6
+        return score
+
+    def _build_evidence_summary(
+        self,
+        category: str,
+        destination_type: str,
+        is_internal: bool,
+        matched_terms: list[str],
+        section: Optional[str],
+    ) -> str:
+        parts = [
+            "link interno" if is_internal else "link externo",
+            f"classificado como {self._category_label(category)}",
+        ]
+        if matched_terms:
+            parts.append("termos: " + ", ".join(matched_terms[:3]))
+        if section:
+            parts.append(f"secao: {section}")
+        if destination_type != "pagina":
+            parts.append(f"destino: {destination_type}")
+        return " | ".join(parts)
 
     def _build_summary(
         self,
@@ -241,6 +468,7 @@ class LinkScraper:
             f"{self._category_label(name)} ({count})"
             for name, count in category_counter.most_common(4)
         ]
+        top_evidence = " | ".join(f"{link.label} [{link.score}]" for link in links[:3])
         internal_count = sum(1 for link in links if link.is_internal)
         external_count = len(links) - internal_count
         base_text = (
@@ -251,6 +479,8 @@ class LinkScraper:
             base_text = f"Na pagina '{page_title}', {base_text[0].lower()}{base_text[1:]}"
         if top_categories:
             base_text += " Principais contextos encontrados: " + ", ".join(top_categories) + "."
+        if top_evidence:
+            base_text += " Evidencias priorizadas: " + top_evidence + "."
         return base_text
 
     def _category_label(self, category: str) -> str:
@@ -271,6 +501,5 @@ class LinkScraper:
         }
         return labels.get(category, category)
 
-    def _sort_key(self, link: ScrapedLink) -> tuple[int, str, str]:
-        priority = 0 if link.is_internal else 1
-        return (priority, link.category, link.label.lower())
+    def _sort_key(self, link: ScrapedLink) -> tuple[int, int, str, str]:
+        return (-link.score, 0 if link.is_internal else 1, link.category, link.label.lower())

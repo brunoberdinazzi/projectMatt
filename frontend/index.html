@@ -64,6 +64,50 @@
 
           <div class="grid">
             <label class="field">
+              <span>Perfil do parser</span>
+              <select id="parser_profile" name="parser_profile">
+                <option value="default">Default</option>
+                <option value="extended">Extended</option>
+                <option value="full">Full</option>
+              </select>
+              <small id="parser-profile-hint">O backend aplica o perfil selecionado antes de extrair os itens.</small>
+            </label>
+
+            <label class="field">
+              <span>Grupos permitidos (opcional)</span>
+              <input
+                id="allowed_groups"
+                name="allowed_groups"
+                type="text"
+                placeholder="Ex.: 1,5 ou 1,2,3,4,5"
+              />
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
+              <span>Status permitidos (opcional)</span>
+              <input
+                id="allowed_status"
+                name="allowed_status"
+                type="text"
+                placeholder="Ex.: Nao,Parcialmente"
+              />
+            </label>
+
+            <label class="field">
+              <span>Nome da aba checklist (opcional)</span>
+              <input
+                id="checklist_sheet_name"
+                name="checklist_sheet_name"
+                type="text"
+                placeholder="Padrao: Checklist"
+              />
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
               <span>Periodo da analise</span>
               <input
                 id="periodo_analise"
@@ -189,10 +233,28 @@
           </div>
 
           <div class="actions">
-            <button id="submit-button" type="submit">Gerar relatorio</button>
-            <p id="status" class="status">Aguardando envio.</p>
+            <button id="review-button" type="button">Analisar contexto</button>
+            <button id="submit-button" type="button" disabled>Gerar relatorio</button>
+            <p id="status" class="status">Aguardando analise.</p>
           </div>
         </form>
+      </section>
+
+      <section id="review-panel" class="panel review-panel" hidden>
+        <div class="hero hero-compact">
+          <p class="eyebrow">Review</p>
+          <h2>Analise antes de gerar</h2>
+          <p class="lead">
+            Confira os itens extraidos, os alertas e o contexto que sera enviado para a IA.
+          </p>
+        </div>
+
+        <div id="review-meta" class="review-meta"></div>
+        <div id="review-warnings" class="review-block"></div>
+        <div id="review-items" class="review-block"></div>
+        <div id="review-pages" class="review-block"></div>
+        <div id="review-summary" class="review-block"></div>
+        <div id="review-prompt" class="review-block"></div>
       </section>
 
       <section class="notes">
@@ -244,6 +306,32 @@
                 min="1"
                 max="200"
                 value="40"
+              />
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
+              <span>Profundidade do crawl</span>
+              <input
+                id="scrape_depth"
+                name="scrape_depth"
+                type="number"
+                min="0"
+                max="3"
+                value="1"
+              />
+            </label>
+
+            <label class="field">
+              <span>Maximo de paginas descobertas</span>
+              <input
+                id="scrape_max_pages"
+                name="scrape_max_pages"
+                type="number"
+                min="0"
+                max="20"
+                value="4"
               />
             </label>
           </div>

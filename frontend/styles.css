@@ -160,6 +160,73 @@ button:disabled {
   margin-top: 22px;
 }
 
+.review-panel {
+  margin-top: 22px;
+}
+
+.review-meta,
+.review-block {
+  margin-top: 18px;
+}
+
+.review-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.review-card {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(27, 43, 65, 0.1);
+  border-radius: 18px;
+  padding: 16px 18px;
+}
+
+.review-card h3,
+.review-card h4,
+.review-section h3 {
+  margin: 0 0 8px;
+}
+
+.review-card p,
+.review-section p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.review-item-card {
+  align-self: start;
+}
+
+.review-meta-text {
+  font-size: 0.92rem;
+}
+
+.review-observation {
+  margin-top: 10px !important;
+  color: var(--text) !important;
+}
+
+.review-list {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.review-pre {
+  margin: 0;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(15, 76, 129, 0.06);
+  border: 1px solid rgba(15, 76, 129, 0.1);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .panel-scraper {
   margin-top: 22px;
 }
@@ -278,7 +345,8 @@ code {
   }
 
   .grid,
-  .notes {
+  .notes,
+  .review-grid {
     grid-template-columns: 1fr;
   }
 
