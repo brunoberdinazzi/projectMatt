@@ -191,8 +191,9 @@ class AnalysisStore:
                     output_format,
                     prompt_snapshot,
                     raw_response,
-                    fallback_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    fallback_reason,
+                    duration_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     analysis_id,
@@ -204,6 +205,7 @@ class AnalysisStore:
                     trace.prompt_snapshot,
                     trace.raw_response,
                     trace.fallback_reason,
+                    trace.duration_ms,
                 ),
             )
             conn.commit()
@@ -223,6 +225,7 @@ class AnalysisStore:
                     prompt_snapshot,
                     raw_response,
                     fallback_reason,
+                    duration_ms,
                     created_at
                 FROM analysis_generations
                 WHERE analysis_id = ?
@@ -241,6 +244,7 @@ class AnalysisStore:
                 prompt_snapshot=row["prompt_snapshot"],
                 raw_response=row["raw_response"],
                 fallback_reason=row["fallback_reason"],
+                duration_ms=row["duration_ms"],
                 created_at=row["created_at"],
             )
             for row in rows
@@ -411,6 +415,7 @@ class AnalysisStore:
                     prompt_snapshot TEXT,
                     raw_response TEXT,
                     fallback_reason TEXT,
+                    duration_ms INTEGER,
                     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
                 );
                 """
@@ -423,6 +428,7 @@ class AnalysisStore:
             self._ensure_column(conn, "scraped_links", "score", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "scraped_links", "matched_terms_json", "TEXT")
             self._ensure_column(conn, "scraped_links", "evidence_summary", "TEXT")
+            self._ensure_column(conn, "analysis_generations", "duration_ms", "INTEGER")
             conn.commit()
 
     def _replace_warnings(

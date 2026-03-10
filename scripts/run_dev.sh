@@ -7,6 +7,15 @@ PORT="${PORT:-8000}"
 
 cd "$ROOT_DIR"
 
+if [[ -f "$ROOT_DIR/frontend/package.json" ]]; then
+  if [[ ! -d "$ROOT_DIR/frontend/node_modules" ]]; then
+    echo "Instalando dependencias do frontend..."
+    npm --prefix "$ROOT_DIR/frontend" install
+  fi
+  echo "Gerando build do frontend..."
+  npm --prefix "$ROOT_DIR/frontend" run build >/dev/null
+fi
+
 if [[ "${SKIP_PORT_CLEANUP:-0}" != "1" ]]; then
   PIDS=()
   while IFS= read -r pid; do

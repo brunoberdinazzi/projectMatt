@@ -4,8 +4,7 @@ from ..models import ChecklistParseResult
 
 
 DEFAULT_REPORT_TITLE = (
-    "Analise de Dados Disponibilizados pela Administracao Publica para Verificacao "
-    "de Conformidade com Legislacao de Acesso a Informacao"
+    "Relatorio Tecnico de Analise Estruturada"
 )
 
 

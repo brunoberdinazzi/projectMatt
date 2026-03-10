@@ -4,13 +4,10 @@ from collections import defaultdict
 
 from ..models import ChecklistItem, ChecklistParseResult, ReportBuildRequest, ReportSection
 from .report_metadata import build_report_title
-
-
-SOURCE_ORDER = ("site_orgao", "portal_transparencia", "esic", "nao_informada")
+from .report_terms import SOURCE_ORDER, entity_display_name, source_label
 
 DEFAULT_TEAM = (
-    "Matheus Cordoba Caramalac - Chefe do Nucleo de Apoio Tecnologico - "
-    "Engenheiro de Controle e Automacao"
+    "Equipe tecnica responsavel nao informada."
 )
 
 
@@ -35,7 +32,7 @@ class TechnicalReportComposer:
             ),
             ReportSection(
                 fonte="nao_informada",
-                titulo="EQUIPE TECNICA DO MINISTERIO PUBLICO ESTADUAL",
+                titulo="EQUIPE TECNICA RESPONSAVEL",
                 texto=self._build_team(parsed),
             ),
             ReportSection(
@@ -167,57 +164,60 @@ class TechnicalReportComposer:
 
     def _build_objective(self, parsed: ChecklistParseResult) -> str:
         solicitacao = parsed.solicitacao or self._fallback_solicitacao(parsed)
-        promotoria = parsed.promotoria or "Promotoria nao informada"
+        solicitante = parsed.promotoria or "solicitante nao informado"
         referencia = parsed.referencia
-        orgao_entity = self._orgao_entity(parsed)
+        entity_name = self._entity_name(parsed)
 
-        text = (
-            f"Atender a {solicitacao or 'solicitacao tecnica nao informada'}, formulada pela {promotoria}, "
-            f"para constatacao de conformidade com as legislacoes pertinentes sobre Acesso a Informacao "
-            f"por parte da {orgao_entity}, apresentando resposta a 01 (um) quesito padrao."
-        )
+        if solicitacao:
+            text = (
+                f"Atender a {solicitacao}, encaminhada por {solicitante}, mediante avaliacao tecnica "
+                f"dos registros, evidencias e apontamentos relacionados a {entity_name}."
+            )
+        else:
+            text = (
+                f"Registrar avaliacao tecnica dos registros, evidencias e apontamentos relacionados "
+                f"a {entity_name}, conforme demanda recebida de {solicitante}."
+            )
         if referencia:
             text += f" A presente analise esta relacionada ao expediente identificado como {referencia}."
         return text
 
     def _build_object(self, parsed: ChecklistParseResult) -> str:
-        orgao_label = self._orgao_entity(parsed)
+        entity_name = self._entity_name(parsed)
         return (
-            f"Analise da divulgacao de informacoes por parte da {orgao_label} em seus sitios eletronicos "
-            "oficiais, a luz da legislacao aplicavel, mediante utilizacao de criterios de apresentacao, "
-            "funcionalidade e acessibilidade das informacoes disponibilizadas."
+            f"Analise dos registros, informacoes e evidencias disponibilizados por {entity_name} "
+            "nos canais e materiais considerados nesta avaliacao, com foco nos criterios definidos "
+            "pelo checklist e nos apontamentos consolidados pelo sistema."
         )
 
     def _build_team(self, parsed: ChecklistParseResult) -> str:
         return parsed.equipe_tecnica or DEFAULT_TEAM
 
     def _build_methodology(self, parsed: ChecklistParseResult) -> str:
-        orgao_label = self._orgao_entity(parsed)
         paragraphs = [
             (
-                "O presente relatorio, visando atender aos quesitos propostos a este Nucleo, e parte "
-                "integrante do Projeto Limpando as Vidracas, atualmente em execucao pela Secretaria DAEX, "
-                "por meio da parceria entre o Corpo Tecnico de Contabilidade e Economia e o Nucleo de Apoio Tecnologico."
+                "O presente relatorio foi elaborado a partir da leitura estruturada da planilha fornecida, "
+                "da selecao automatizada dos apontamentos elegiveis e da consolidacao das evidencias "
+                "textuais associadas a cada item."
             ),
             (
-                f"Nesse contexto, procedeu-se a coleta e a analise das informacoes disponibilizadas pela {orgao_label} "
-                "em seus sitios eletronicos oficiais, levando em consideracao criterios de apresentacao, "
-                "funcionalidade e acessibilidade."
+                "A analise considerou o perfil do parser adotado, os grupos monitorados, os status "
+                "selecionados e as observacoes registradas no material de entrada."
             ),
             (
-                "Iniciou-se esta analise mediante coleta de informacoes nos referidos sitios, utilizando como "
-                "referencia o checklist institucional elaborado no ambito do projeto, o qual lista obrigacoes "
-                "legais, meios de disponibilizacao e formatos adequados de acesso as informacoes pela sociedade."
+                "Sempre que disponivel, o contexto recuperado por scraping foi utilizado apenas como apoio "
+                "para contextualizacao, sem substituir os achados estruturados do checklist."
             ),
         ]
         if parsed.relatorio_contabil_referencia:
             paragraphs.append(
-                "Para a analise qualitativa dos dados e o preenchimento do checklist, consulte tambem "
+                "Para complementar a leitura qualitativa dos dados e o preenchimento do checklist, "
+                "foi consultado tambem "
                 f"{parsed.relatorio_contabil_referencia}."
             )
         paragraphs.append(
-            "Portanto, o presente parecer encontra-se organizado em secoes tematicas, a fim de "
-            "propiciar melhor compreensao dos fatos e das recomendacoes tecnicas apresentadas."
+            "O documento foi organizado em secoes tematicas para facilitar a revisao dos resultados, "
+            "das recomendacoes e das conclusoes apresentadas."
         )
         return "\n\n".join(paragraphs)
 
@@ -227,21 +227,19 @@ class TechnicalReportComposer:
         period_text = parsed.periodo_coleta or "periodo nao informado pelo usuario"
         paragraphs = [
             (
-                f"A coleta de dados foi efetuada em {self._count_as_words(count)} sitio(s) eletronico(s) distinto(s), "
-                f"todos sob responsabilidade da Administracao Municipal, no {period_text}."
+                f"A coleta de dados considerou {self._count_as_words(count)} fonte(s) ou ambiente(s) digital(is) "
+                f"distinto(s), no {period_text}."
             )
         ]
         if "site_orgao" in sources:
-            site_text = (
-                f"Inicialmente, procedeu-se a analise do site oficial da {self._orgao_entity(parsed)}"
-            )
+            site_text = f"Inicialmente, foi considerada a fonte classificada como {source_label('site_orgao')}"
             if parsed.site_url:
-                site_text += f", acessivel pelo endereco eletronico {parsed.site_url}"
+                site_text += f", acessivel pelo endereco {parsed.site_url}"
             site_text += "."
             paragraphs.append(site_text)
 
         if "portal_transparencia" in sources:
-            portal_text = "O segundo ambiente analisado corresponde ao Portal da Transparencia utilizado pelo ente"
+            portal_text = f"Tambem foi considerado o ambiente classificado como {source_label('portal_transparencia')}"
             if parsed.portal_url:
                 portal_text += f", com acesso identificado em {parsed.portal_url}"
             else:
@@ -250,7 +248,7 @@ class TechnicalReportComposer:
             paragraphs.append(portal_text)
 
         if "esic" in sources:
-            esic_text = "Por fim, foi analisado o sistema e-SIC disponibilizado para atendimento ao cidadao"
+            esic_text = f"Por fim, foi considerado o ambiente classificado como {source_label('esic')}"
             if parsed.esic_url:
                 esic_text += f", com acesso identificado em {parsed.esic_url}"
             else:
@@ -259,40 +257,43 @@ class TechnicalReportComposer:
             paragraphs.append(esic_text)
 
         paragraphs.append(
-            "Destaca-se que esta analise se restringe aos criterios de apresentacao, funcionalidade e "
-            "acessibilidade das informacoes disponibilizadas nos ambientes eletronicos avaliados."
+            "Destaca-se que esta analise se restringe aos criterios observados no checklist e aos "
+            "registros efetivamente disponibilizados nos ambientes avaliados."
         )
         return "\n\n".join(paragraphs)
 
     def _build_recommendations_intro(self, parsed: ChecklistParseResult) -> str:
         return (
-            "Caso sejam entendidas necessarias e beneficas, serao apresentadas recomendacoes pertinentes "
-            "para o aprimoramento dos sistemas de disponibilizacao de informacoes, com fundamento nas "
-            "legislacoes vigentes e em boas praticas de apresentacao de dados ao cidadao."
+            "Quando consideradas pertinentes, as recomendacoes tecnicas abaixo visam orientar ajustes "
+            "de processo, conteudo, disponibilizacao ou organizacao das informacoes avaliadas, com base "
+            "nos achados consolidados nesta analise."
         )
 
     def _build_results_intro(self, parsed: ChecklistParseResult) -> str:
         if not parsed.itens_processados:
             return (
                 "No recorte automatizado considerado nesta versao, nao foram identificados apontamentos "
-                "classificados como Nao ou Parcialmente que demandem registro analitico especifico."
+                f"classificados nos status {self._status_scope_text(parsed)} para os grupos {self._group_scope_text(parsed)} "
+                "que demandem registro analitico especifico."
             )
         return (
             "Por meio das tecnicas e metodos descritos anteriormente, verificaram-se os fatos relevantes "
-            "relacionados a disponibilizacao de informacoes para a sociedade por parte da Administracao "
-            "Publica em seus diferentes sitios eletronicos."
+            "relacionados aos registros avaliados nos diferentes ambientes considerados."
             "\n\n"
             "Com o objetivo de garantir a melhor compreensao dos fatos apresentados, os apontamentos "
-            "foram organizados por ambiente eletronico de sua ocorrencia."
+            "foram organizados por fonte de ocorrencia."
         )
 
     def _build_recommendations_heading_text(self, parsed: ChecklistParseResult) -> str:
         if not parsed.itens_processados:
-            return "Diante da ausencia de apontamentos no recorte automatizado, nao ha recomendacoes tecnicas especificas."
+            return (
+                "Diante da ausencia de apontamentos no recorte automatizado, nao ha recomendacoes tecnicas "
+                f"especificas para os grupos {self._group_scope_text(parsed)}."
+            )
         return (
             "Com base nas informacoes coletadas, foi produzida serie de recomendacoes voltadas ao "
-            "aprimoramento da usabilidade dos recursos tecnologicos e da conformidade com as leis e "
-            "normas vigentes. Para favorecer a integral compreensao dos fatos, as irregularidades e "
+            "aprimoramento da consistencia das informacoes, da usabilidade dos recursos avaliados e "
+            "da resolucao das inconformidades observadas. Para favorecer a compreensao dos fatos, as "
             "falhas identificadas sao apresentadas em conjunto com as respectivas providencias sugeridas."
         )
 
@@ -304,19 +305,20 @@ class TechnicalReportComposer:
         recommendation_map: dict[str, str],
     ) -> str:
         question = (
-            "A partir da coleta de dados disponibilizados no(s) sitio(s) eletronico(s) oficial(is) do ente, "
-            "realizada por meio da aplicacao do checklist, ha necessidade de recomendacoes tecnicas? Se sim, detalhar?"
+            "A partir da aplicacao do checklist e da consolidacao das evidencias reunidas, ha necessidade "
+            "de recomendacoes tecnicas? Se sim, detalhar."
         )
         if not parsed.itens_processados:
             answer = (
                 "No recorte automatizado atualmente adotado, nao foram identificadas inconformidades "
-                "nos grupos e status considerados para formulacao de recomendacoes tecnicas especificas."
+                f"nos grupos {self._group_scope_text(parsed)} e status {self._status_scope_text(parsed)} "
+                "para formulacao de recomendacoes tecnicas especificas."
             )
         else:
             parts = [
-                "Apos verificacao realizada nos sitios eletronicos oficiais do ente, foi constatada a "
-                "presenca de irregularidades e ausencias de informacao que justificam a expedicao de "
-                "recomendacoes tecnicas, sintetizadas da seguinte forma, caso entendidas pertinentes:"
+                "Apos a verificacao das fontes e registros considerados nesta analise, foram constatadas "
+                "inconformidades e lacunas de informacao que justificam a formulacao de recomendacoes "
+                "tecnicas, sintetizadas da seguinte forma:"
             ]
             synthesized = self._build_quesitos_recommendations(parsed, grouped_items, recommendation_map)
             if synthesized:
@@ -338,16 +340,15 @@ class TechnicalReportComposer:
             paragraphs.append(conclusion_text)
         else:
             paragraphs.append(
-                f"Este relatorio apresentou analise quanto a funcionalidade, apresentacao e disponibilidade "
-                f"das informacoes prestadas pela {self._orgao_entity(parsed)} em seus sitios eletronicos "
-                "oficiais, bem como recomendacoes de melhorias e correcoes para melhor disponibilizacao "
-                "de informacoes aos cidadaos."
+                f"Este relatorio apresentou a analise dos registros e evidencias associados a "
+                f"{self._entity_name(parsed)}, bem como recomendacoes de melhoria e correcoes para os "
+                "pontos identificados ao longo da avaliacao."
             )
 
         paragraphs.append(
-            "O atendimento a presente solicitacao integra o Projeto Limpando as Vidracas, executado "
-            "pela Secretaria DAEX. Assim, alem do objetivo principal mencionado, o presente parecer "
-            "contribui para a padronizacao das analises tecnicas desenvolvidas por esta Secretaria."
+            "As conclusoes acima sintetizam os achados relevantes do recorte analisado e devem ser "
+            "lidas em conjunto com as secoes anteriores, nas quais constam o detalhamento dos fatos "
+            "e das providencias recomendadas."
         )
         paragraphs.append("Colocamo-nos a disposicao para quaisquer esclarecimentos.")
         if parsed.cidade_emissao or parsed.data_emissao:
@@ -366,17 +367,17 @@ class TechnicalReportComposer:
 
         if "site_orgao" in self._available_sources(parsed):
             lines.append(
-                f"Anexo {self._roman_numeral(next_index)} - Tela inicial do site oficial da {self._orgao_entity(parsed)}."
+                f"Anexo {self._roman_numeral(next_index)} - Registro do ambiente classificado como {source_label('site_orgao')}."
             )
             next_index += 1
         if "portal_transparencia" in self._available_sources(parsed):
             lines.append(
-                f"Anexo {self._roman_numeral(next_index)} - Acesso ao Portal da Transparencia utilizado pelo ente."
+                f"Anexo {self._roman_numeral(next_index)} - Registro do ambiente classificado como {source_label('portal_transparencia')}."
             )
             next_index += 1
         if "esic" in self._available_sources(parsed):
             lines.append(
-                f"Anexo {self._roman_numeral(next_index)} - Acesso ao sistema e-SIC municipal."
+                f"Anexo {self._roman_numeral(next_index)} - Registro do ambiente classificado como {source_label('esic')}."
             )
             next_index += 1
 
@@ -388,42 +389,31 @@ class TechnicalReportComposer:
             next_index += 1
         if "5.3" in item_codes:
             lines.append(
-                f"Anexo {self._roman_numeral(next_index)} - Demonstracao de publicacao incompleta de informacoes sobre a estrutura organizacional do municipio."
+                f"Anexo {self._roman_numeral(next_index)} - Demonstracao de publicacao incompleta de informacoes institucionais."
             )
             next_index += 1
         if item_codes.intersection({"5.4", "5.5", "5.6", "5.7", "5.8"}):
             lines.append(
-                f"Anexo {self._roman_numeral(next_index)} - Demonstracao das ausencias de informacoes e funcionalidades no sistema e-SIC."
+                f"Anexo {self._roman_numeral(next_index)} - Demonstracao das ausencias de informacoes e funcionalidades no canal de atendimento."
             )
         if len(lines) == 1:
             lines.append("Anexo II - Documentacao complementar da avaliacao realizada.")
         return "\n\n".join(lines)
 
     def _source_heading(self, parsed: ChecklistParseResult, source_key: str) -> str:
-        orgao = parsed.orgao or "orgao nao informado"
-        if source_key == "site_orgao":
-            if (parsed.tipo_orgao or "").lower() == "camara":
-                return f"Site Oficial da Camara Municipal de {orgao}"
-            return f"Site Oficial da Prefeitura Municipal de {orgao}"
-        if source_key == "portal_transparencia":
-            return f"Portal da Transparencia Municipal de {orgao}"
-        if source_key == "esic":
-            return "Sistema e-SIC Municipal"
-        return "Outros Apontamentos"
+        return source_label(source_key)
 
     def _orgao_label(self, parsed: ChecklistParseResult, include_article: bool = True) -> str:
-        orgao = parsed.orgao or "orgao nao informado"
-        tipo = (parsed.tipo_orgao or "").lower()
-        if tipo == "camara":
-            base = f"Camara Municipal de {orgao}"
-        else:
-            base = f"Prefeitura Municipal de {orgao}"
+        base = entity_display_name(parsed.orgao, parsed.tipo_orgao)
         if include_article:
-            return f"a {base}"
+            return f"a entidade {base}"
         return base
 
     def _orgao_entity(self, parsed: ChecklistParseResult) -> str:
         return self._orgao_label(parsed, include_article=False)
+
+    def _entity_name(self, parsed: ChecklistParseResult) -> str:
+        return entity_display_name(parsed.orgao, parsed.tipo_orgao)
 
     def _available_sources(self, parsed: ChecklistParseResult) -> list[str]:
         sources: list[str] = []
@@ -512,6 +502,13 @@ class TechnicalReportComposer:
     def _count_as_words(self, count: int) -> str:
         mapping = {1: "um", 2: "dois", 3: "tres"}
         return mapping.get(count, str(count))
+
+    def _group_scope_text(self, parsed: ChecklistParseResult) -> str:
+        groups = parsed.parser_options.allowed_groups or parsed.grupos_permitidos
+        return ", ".join(groups)
+
+    def _status_scope_text(self, parsed: ChecklistParseResult) -> str:
+        return ", ".join(parsed.parser_options.allowed_status)
 
     def _roman_numeral(self, number: int) -> str:
         mapping = {

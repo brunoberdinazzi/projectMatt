@@ -112,7 +112,7 @@ def build_pdf(source_path: Path, output_path: Path) -> None:
         rightMargin=2.2 * cm,
         topMargin=2.0 * cm,
         bottomMargin=2.0 * cm,
-        title="Matt - Project Overview and MVP",
+        title="Draux Inc. - Project Overview and MVP",
         author="Codex",
     )
     doc.build(story)

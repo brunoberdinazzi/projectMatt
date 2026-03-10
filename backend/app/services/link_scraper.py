@@ -77,7 +77,7 @@ class LinkScraperConfig:
     crawl_depth: int = 1
     crawl_max_pages: int = 4
     follow_score_threshold: int = 38
-    user_agent: str = "MattLinkScraper/0.3 (+https://localhost; spreadsheet to report)"
+    user_agent: str = "DrauxCrawler/0.3 (+https://localhost; spreadsheet to report)"
 
 
 @dataclass

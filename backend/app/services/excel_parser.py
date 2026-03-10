@@ -37,21 +37,21 @@ DEFAULT_ALLOWED_STATUS = ("Nao", "Parcialmente")
 PARSER_PROFILE_MAP = {
     "default": ParserProfileDefinition(
         key="default",
-        label="Default",
+        label="Padrao",
         description="Recorte padrao: grupos 1 e 5 com itens Nao ou Parcialmente.",
         allowed_groups=["1", "5"],
         allowed_status=["Nao", "Parcialmente"],
     ),
     "extended": ParserProfileDefinition(
         key="extended",
-        label="Extended",
+        label="Estendido",
         description="Checklist ampliado: grupos 1 a 5, mantendo foco em Nao ou Parcialmente.",
         allowed_groups=["1", "2", "3", "4", "5"],
         allowed_status=["Nao", "Parcialmente"],
     ),
     "full": ParserProfileDefinition(
         key="full",
-        label="Full",
+        label="Completo",
         description="Checklist completo: grupos 1 a 5 e todos os status normalizados.",
         allowed_groups=["1", "2", "3", "4", "5"],
         allowed_status=["Sim", "Nao", "Parcialmente", "Nao se aplica"],
@@ -555,6 +555,10 @@ def _observation_expression_matches(expression: str, item_code: str) -> bool:
     expression_normalized = re.sub(r"\s+", "", expression.upper())
     item_normalized = re.sub(r"\s+", "", item_code.upper())
     if expression_normalized == item_normalized:
+        return True
+
+    expression_with_suffix = re.match(r"(\d+(?:\.\d+)?)([A-Z])$", expression_normalized)
+    if expression_with_suffix and item_normalized == expression_with_suffix.group(1):
         return True
 
     tokens = re.findall(r"\d+(?:\.\d+)?[A-Z]?", expression_normalized)

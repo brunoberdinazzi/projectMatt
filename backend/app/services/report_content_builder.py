@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Optional
 
 from ..models import (
     ChecklistItem,
@@ -11,21 +12,67 @@ from ..models import (
     ReportSection,
 )
 from .report_metadata import build_report_title
+from .report_terms import SOURCE_ORDER, source_label, source_section_title
 
-
-SOURCE_LABELS = {
-    "site_orgao": "Site Oficial do Orgao",
-    "portal_transparencia": "Portal da Transparencia",
-    "esic": "Sistema e-SIC",
-    "nao_informada": "Fonte nao identificada",
-}
-
-SOURCE_ORDER = ("site_orgao", "portal_transparencia", "esic", "nao_informada")
 
 RECOMMENDATION_BY_ITEM = {
+    "2.1": (
+        "Publicar o Plano Plurianual vigente em local de facil acesso, com arquivo legivel e identificacao clara do periodo de vigencia."
+    ),
+    "2.2": (
+        "Publicar a Lei de Diretrizes Orcamentarias vigente em local de facil acesso, com integridade documental e referencia clara ao exercicio correspondente."
+    ),
+    "2.3": (
+        "Publicar a Lei Orcamentaria Anual vigente em local de facil acesso, com integridade documental e referencia clara ao exercicio correspondente."
+    ),
+    "2.4": (
+        "Disponibilizar integralmente e de forma tempestiva os anexos do Relatorio Resumido da Execucao Orcamentaria, observando a periodicidade legal aplicavel."
+    ),
+    "2.5": (
+        "Disponibilizar integralmente e de forma tempestiva os Relatorios de Gestao Fiscal, observando a periodicidade legal aplicavel."
+    ),
+    "2.6": (
+        "Publicar integralmente as prestacoes de contas encaminhadas ao Tribunal de Contas, em formato legivel e com identificacao clara do exercicio correspondente."
+    ),
+    "2.7": (
+        "Publicar os pareceres previos emitidos pelo Tribunal de Contas sobre as prestacoes de contas, com vinculacao clara ao respectivo exercicio."
+    ),
+    "3.1": (
+        "Divulgar informacoes pormenorizadas sobre as receitas, com detalhamento suficiente para permitir consulta e controle social."
+    ),
+    "3.2": (
+        "Divulgar informacoes pormenorizadas sobre as despesas, com detalhamento suficiente para permitir consulta e controle social."
+    ),
+    "3.3": (
+        "Assegurar atualizacao em tempo real das informacoes de receitas e despesas, observando a tempestividade exigida pela legislacao."
+    ),
+    "3.4": (
+        "Divulgar os repasses e as transferencias de recursos financeiros com identificacao clara da origem, destino, valores e datas correspondentes."
+    ),
+    "3.5": (
+        "Divulgar informacoes completas e atualizadas sobre programas, acoes, projetos e obras, com dados suficientes para acompanhamento publico."
+    ),
+    "3.6": (
+        "Divulgar os procedimentos licitatorios com seus respectivos documentos, fases, resultados e anexos essenciais para consulta publica."
+    ),
+    "3.7": (
+        "Divulgar relacao atualizada dos contratos celebrados, acompanhada dos instrumentos e documentos pertinentes."
+    ),
+    "3.8": (
+        "Divulgar relacao atualizada dos convenios celebrados, acompanhada dos instrumentos e documentos pertinentes."
+    ),
+    "4.1": (
+        "Divulgar relacao atualizada de servidores com informacoes suficientes para consulta publica e controle social."
+    ),
+    "4.2": (
+        "Divulgar a remuneracao dos servidores de forma clara, individualizada e acessivel ao usuario."
+    ),
+    "4.3": (
+        "Divulgar as diarias recebidas pelos servidores com informacoes claras sobre beneficiario, valor, periodo e motivo."
+    ),
     "1.3": (
         "Disponibilizar ferramenta de pesquisa de conteudo que permita localizar, de forma simples, "
-        "as informacoes publicadas no sitio oficial e no Portal da Transparencia."
+        "as informacoes publicadas nos canais monitorados e nos materiais disponibilizados para consulta."
     ),
     "1.4": (
         "Assegurar a plena funcionalidade de geracao de relatorios em diversos formatos eletronicos, "
@@ -74,6 +121,24 @@ RECOMMENDATION_BY_ITEM = {
 }
 
 ITEM_SUBJECT_BY_CODE = {
+    "2.1": "disponibilizacao do Plano Plurianual",
+    "2.2": "disponibilizacao da Lei de Diretrizes Orcamentarias",
+    "2.3": "disponibilizacao da Lei Orcamentaria Anual",
+    "2.4": "disponibilizacao do Relatorio Resumido da Execucao Orcamentaria",
+    "2.5": "disponibilizacao do Relatorio de Gestao Fiscal",
+    "2.6": "disponibilizacao das prestacoes de contas entregues ao Tribunal de Contas",
+    "2.7": "disponibilizacao dos pareceres previos emitidos pelo Tribunal de Contas",
+    "3.1": "divulgacao pormenorizada das receitas",
+    "3.2": "divulgacao pormenorizada das despesas",
+    "3.3": "atualizacao em tempo real de receitas e despesas",
+    "3.4": "divulgacao dos repasses ou transferencias de recursos financeiros",
+    "3.5": "divulgacao de programas, acoes, projetos e obras",
+    "3.6": "divulgacao dos procedimentos licitatorios",
+    "3.7": "divulgacao da relacao dos contratos celebrados",
+    "3.8": "divulgacao da relacao dos convenios celebrados",
+    "4.1": "divulgacao da relacao de servidores",
+    "4.2": "divulgacao da remuneracao dos servidores",
+    "4.3": "divulgacao das diarias recebidas pelos servidores",
     "1.3": "existencia de ferramenta de pesquisa de conteudo",
     "1.4": "geracao de relatorios em diversos formatos eletronicos",
     "1.5": "inexistencia de limitadores indevidos de acesso automatizado",
@@ -101,8 +166,8 @@ class ReportContentBuilder:
             sections.append(
                 ReportSection(
                     fonte=source_key,
-                    titulo=f"Resultados Obtidos - {SOURCE_LABELS[source_key]}",
-                    texto=self._build_results_text(source_key, grouped.get(source_key, [])),
+                    titulo=source_section_title("Resultados Obtidos", source_key),
+                    texto=self._build_results_text(payload, source_key, grouped.get(source_key, [])),
                 )
             )
 
@@ -110,7 +175,7 @@ class ReportContentBuilder:
             sections.append(
                 ReportSection(
                     fonte=source_key,
-                    titulo=f"Recomendacoes - {SOURCE_LABELS[source_key]}",
+                    titulo=source_section_title("Recomendacoes", source_key),
                     texto=self._build_recommendations_text(source_key, grouped.get(source_key, [])),
                 )
             )
@@ -119,7 +184,7 @@ class ReportContentBuilder:
             ReportSection(
                 fonte="nao_informada",
                 titulo="Quesito - Sintese das Recomendacoes",
-                texto=self._build_summary_text(grouped),
+                texto=self._build_summary_text(payload, grouped),
             )
         )
         sections.append(
@@ -157,11 +222,16 @@ class ReportContentBuilder:
             grouped[item.fonte].append(item)
         return grouped
 
-    def _build_results_text(self, source_key: str, items: list[ChecklistItem]) -> str:
+    def _build_results_text(
+        self,
+        payload: ChecklistParseResult,
+        source_key: str,
+        items: list[ChecklistItem],
+    ) -> str:
         if not items:
             return (
-                f"Nao foram identificados, no ambito de {SOURCE_LABELS[source_key]}, apontamentos classificados como Nao "
-                "ou Parcialmente no recorte automatizado dos grupos 1 e 5."
+                f"Nao foram identificados, no ambito de {source_label(source_key)}, apontamentos classificados "
+                f"nos status monitorados ({self._status_scope_text(payload)}) para os grupos {self._group_scope_text(payload)}."
             )
 
         specialized_text = self._build_specialized_results_text(source_key, items)
@@ -176,7 +246,7 @@ class ReportContentBuilder:
         if not actionable_items:
             return (
                 f"Nao se identificaram recomendacoes tecnicas especificas para "
-                f"{SOURCE_LABELS[source_key]} no recorte automatizado atual."
+                f"{source_label(source_key)} no recorte automatizado atual."
             )
 
         specialized_text = self._build_specialized_recommendations_text(source_key, actionable_items)
@@ -186,13 +256,17 @@ class ReportContentBuilder:
         paragraphs = [self._build_recommendation_paragraph(item) for item in actionable_items]
         return "\n\n".join(paragraphs)
 
-    def _build_summary_text(self, grouped: dict[str, list[ChecklistItem]]) -> str:
+    def _build_summary_text(
+        self,
+        payload: ChecklistParseResult,
+        grouped: dict[str, list[ChecklistItem]],
+    ) -> str:
         all_items = [item for source_key in SOURCE_ORDER for item in grouped.get(source_key, [])]
         actionable_items = [item for item in all_items if item.status not in {"Sim", "Nao se aplica"}]
         if not actionable_items:
             return (
                 "No recorte automatizado vigente, nao foram identificados apontamentos "
-                "que demandem recomendacoes tecnicas corretivas."
+                f"que demandem recomendacoes tecnicas corretivas para os grupos {self._group_scope_text(payload)}."
             )
 
         source_summaries = []
@@ -201,11 +275,11 @@ class ReportContentBuilder:
             if not items:
                 continue
             source_summaries.append(
-                f"{SOURCE_LABELS[source_key]}: {len(items)} apontamento(s) relevante(s)"
+                f"{source_label(source_key)}: {len(items)} apontamento(s) relevante(s)"
             )
 
         return (
-            "A partir da verificacao realizada nos ambientes eletronicos oficiais do ente, constatou-se "
+            "A partir da verificacao realizada nas fontes consideradas nesta analise, constatou-se "
             "a necessidade de adocao de medidas corretivas e de aprimoramento, sintetizadas nos "
             "seguintes eixos: "
             + "; ".join(source_summaries)
@@ -215,14 +289,15 @@ class ReportContentBuilder:
     def _build_conclusion_text(self, payload: ChecklistParseResult) -> str:
         if not payload.itens_processados:
             base_text = (
-                "No recorte considerado por esta versao do sistema, nao foram identificados nos grupos 1 "
-                "e 5 itens com classificacao Nao ou Parcialmente. Ainda assim, recomenda-se manter a "
+                f"No recorte considerado por esta versao do sistema, nao foram identificados nos grupos "
+                f"{self._group_scope_text(payload)} itens com classificacao {self._status_scope_text(payload)}. "
+                "Ainda assim, recomenda-se manter a "
                 "verificacao manual do checklist completo para fins de controle institucional."
             )
             scoped_warnings = [
                 warning
                 for warning in payload.warnings
-                if "fora do escopo automatizado atual" in warning or "grupos 1 e 5" in warning
+                if "fora do escopo automatizado atual" in warning or "grupos " in warning
             ]
             if scoped_warnings:
                 return base_text + " " + " ".join(scoped_warnings)
@@ -230,9 +305,9 @@ class ReportContentBuilder:
 
         return (
             "O processamento automatizado da planilha permitiu consolidar os achados relevantes do "
-            "checklist e organiza-los em linguagem tecnica compatível com a elaboracao do relatorio "
-            "institucional. Recomenda-se, todavia, revisao final pela equipe responsavel antes da "
-            "emissao formal do parecer."
+            "checklist e organiza-los em linguagem tecnica compativel com a elaboracao do relatorio "
+            "final. Recomenda-se, todavia, revisao final pela equipe responsavel antes da "
+            "emissao da versao definitiva."
         )
 
     def _build_finding_paragraph(self, item: ChecklistItem) -> str:
@@ -264,7 +339,7 @@ class ReportContentBuilder:
         problem_details = [
             detail.descricao
             for detail in item.detalhes
-            if detail.status.lower() not in {"sim"}
+            if detail.status.lower() in {"nao", "parcialmente", "parcial"}
         ]
         if not problem_details:
             return ""
@@ -310,7 +385,7 @@ class ReportContentBuilder:
 
     def _build_site_results_text(self, item: ChecklistItem) -> str:
         paragraphs = [
-            "No site oficial do ente, verificou-se divulgacao apenas parcial das informacoes institucionais exigidas pela legislacao aplicavel."
+            f"Na fonte classificada como {source_label('site_orgao')}, verificou-se divulgacao apenas parcial das informacoes institucionais esperadas para o recorte analisado."
         ]
         if item.observacao:
             paragraphs.append(_ensure_sentence(item.observacao))
@@ -326,7 +401,7 @@ class ReportContentBuilder:
     def _build_portal_results_text(self, items: list[ChecklistItem]) -> str:
         summarized_subjects = [self._subject_text(item) for item in items]
         paragraphs = [
-            "No Portal da Transparencia, foram identificadas inconformidades relacionadas a "
+            f"Na fonte classificada como {source_label('portal_transparencia')}, foram identificadas inconformidades relacionadas a "
             f"{self._join_with_conjunction(summarized_subjects)}."
         ]
         for item in items:
@@ -353,13 +428,13 @@ class ReportContentBuilder:
         if issue_phrases:
             paragraphs.insert(
                 0,
-                "No sistema e-SIC, verificou-se a ausencia de disponibilizacao de "
+                f"Na fonte classificada como {source_label('esic')}, verificou-se a ausencia de disponibilizacao de "
                 f"{self._join_with_conjunction(issue_phrases)}."
             )
         if not paragraphs:
             paragraphs.append(
-                "No sistema e-SIC, foram identificadas ausencias de informacoes e funcionalidades "
-                "relacionadas ao atendimento das exigencias legais aplicaveis."
+                f"Na fonte classificada como {source_label('esic')}, foram identificadas ausencias de informacoes "
+                "e funcionalidades relacionadas ao recorte analisado."
             )
         return "\n\n".join(paragraphs)
 
@@ -376,7 +451,7 @@ class ReportContentBuilder:
 
     def _build_portal_recommendations_text(self, items: list[ChecklistItem]) -> str:
         paragraphs = [
-            "No Portal da Transparencia, as recomendacoes abaixo visam corrigir os problemas "
+            f"Na fonte classificada como {source_label('portal_transparencia')}, as recomendacoes abaixo visam corrigir os problemas "
             "identificados no recorte automatizado do checklist."
         ]
         paragraphs.extend(self._build_recommendation_paragraph(item) for item in items)
@@ -391,7 +466,7 @@ class ReportContentBuilder:
         paragraphs = []
         if intro_phrases:
             paragraphs.append(
-                "No sistema e-SIC, identificou-se necessidade de adequacao quanto a "
+                f"Na fonte classificada como {source_label('esic')}, identificou-se necessidade de adequacao quanto a "
                 f"{self._join_with_conjunction(intro_phrases)}."
             )
         for item in items:
@@ -449,6 +524,16 @@ class ReportContentBuilder:
         if normalized:
             normalized = normalized[0].lower() + normalized[1:]
         return normalized
+
+    def _group_scope_text(self, payload: Optional[ChecklistParseResult] = None) -> str:
+        parser_payload = payload or ChecklistParseResult()
+        groups = parser_payload.parser_options.allowed_groups or parser_payload.grupos_permitidos
+        return ", ".join(groups)
+
+    def _status_scope_text(self, payload: Optional[ChecklistParseResult] = None) -> str:
+        parser_payload = payload or ChecklistParseResult()
+        statuses = parser_payload.parser_options.allowed_status
+        return ", ".join(statuses)
 
 
 def _ensure_sentence(text: str) -> str:

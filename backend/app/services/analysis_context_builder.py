@@ -3,14 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from ..models import ChecklistItem, ChecklistParseResult, ScrapedLink, ScrapedPageRecord
-
-
-SOURCE_LABELS = {
-    "site_orgao": "Site oficial",
-    "portal_transparencia": "Portal da transparencia",
-    "esic": "Sistema e-SIC",
-    "nao_informada": "Fonte nao identificada",
-}
+from .report_terms import entity_display_name, source_label
 
 
 class AnalysisContextBuilder:
@@ -28,9 +21,10 @@ class AnalysisContextBuilder:
         return "\n\n".join(part for part in parts if part)
 
     def _build_header(self, parsed: ChecklistParseResult) -> str:
+        entity_name = entity_display_name(parsed.orgao, parsed.tipo_orgao)
         lines = [
-            f"Analise registrada para {parsed.orgao or 'orgao nao informado'}.",
-            f"Tipo de orgao: {parsed.tipo_orgao or 'nao informado'}.",
+            f"Analise registrada para {entity_name}.",
+            f"Tipo de entidade: {parsed.tipo_orgao or 'nao informado'}.",
             f"Periodo da analise: {parsed.periodo_analise or 'nao informado'}.",
             f"SAT: {parsed.sat_numero or 'nao identificado'}.",
             (
@@ -41,11 +35,11 @@ class AnalysisContextBuilder:
         ]
         source_lines = []
         if parsed.site_url:
-            source_lines.append(f"Site oficial: {parsed.site_url}")
+            source_lines.append(f"{source_label('site_orgao')}: {parsed.site_url}")
         if parsed.portal_url:
-            source_lines.append(f"Portal da transparencia: {parsed.portal_url}")
+            source_lines.append(f"{source_label('portal_transparencia')}: {parsed.portal_url}")
         if parsed.esic_url:
-            source_lines.append(f"e-SIC: {parsed.esic_url}")
+            source_lines.append(f"{source_label('esic')}: {parsed.esic_url}")
         if source_lines:
             lines.append("Fontes principais: " + " | ".join(source_lines) + ".")
         return " ".join(lines)
@@ -66,7 +60,7 @@ class AnalysisContextBuilder:
                 if item.observacao:
                     chunk += f": {self._normalize_text(item.observacao, 220)}"
                 item_summaries.append(chunk)
-            blocks.append(f"- {SOURCE_LABELS.get(source_key, source_key)}: " + " | ".join(item_summaries))
+            blocks.append(f"- {source_label(source_key)}: " + " | ".join(item_summaries))
         return "\n".join(blocks)
 
     def _build_scraping_block(self, pages: list[ScrapedPageRecord]) -> str:
@@ -83,7 +77,7 @@ class AnalysisContextBuilder:
             notable_links = self._notable_links(page.links)
             page_origin = self._page_origin(page)
             line = (
-                f"- {SOURCE_LABELS.get(page.fonte, page.fonte)}{page_origin}: {page.summary} "
+                f"- {source_label(page.fonte)}{page_origin}: {page.summary} "
                 f"Categorias principais: {top_categories}."
             )
             if notable_links:

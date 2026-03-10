@@ -1,4 +1,4 @@
-# Matt
+# Draux Inc.
 
 AI-assisted pipeline for turning structured spreadsheets into technical reports.
 
@@ -11,7 +11,7 @@ report in `DOCX` or `PDF`.
 Many teams work from spreadsheets that already contain the facts, statuses and notes required for a
 report, but still need to rewrite everything manually into narrative form.
 
-Matt automates that middle layer:
+Draux Inc. automates that middle layer:
 
 1. ingest the workbook;
 2. normalize the relevant rows;
@@ -67,13 +67,14 @@ The default parser is tuned to a workbook with:
 - rationale in column `U`;
 - a trailing observations block, with item code in `B` and note text in `E`.
 
-The current extraction scope is intentionally narrow:
+The base profile remains intentionally narrow:
 
 - groups `1` and `5`;
 - statuses `Nao` and `Parcialmente`;
 - notes linked from the observations block.
 
-That scope can be expanded later without changing the rest of the pipeline.
+For broader real-world use, the recommended profile is `extended`, which already covers groups `1`
+to `5` while keeping the focus on `Nao` and `Parcialmente`.
 
 The parser is now configurable per request through:
 
@@ -358,7 +359,7 @@ export REPORT_TEMPLATE_PATH="/path/to/template.docx"
 Current limitations are explicit:
 
 - the parser is still tuned to one workbook family;
-- the default extraction scope is narrow;
+- the base parser profile is narrow by design, although the UI now defaults to `extended`;
 - link classification is heuristic;
 - the AI layer receives curated context, not raw workbook dumps;
 - generated `PDF` files do not preserve `DOCX` visual templates.

@@ -1,8 +1,8 @@
 # Project Overview and MVP
 
-## What Matt is
+## What Draux Inc. is
 
-Matt is a practical pipeline for converting structured spreadsheet data into report-ready text with
+Draux Inc. is a practical pipeline for converting structured spreadsheet data into report-ready text with
 AI assistance.
 
 It combines:
@@ -24,7 +24,7 @@ The core product idea is simple:
 
 ## What makes the approach useful
 
-Instead of sending raw spreadsheets directly to a model, Matt builds a controlled pipeline:
+Instead of sending raw spreadsheets directly to a model, Draux Inc. builds a controlled pipeline:
 
 - parse first;
 - normalize second;
@@ -84,7 +84,7 @@ That makes the system easier to debug, review and extend.
 
 ## AI strategy
 
-Matt supports multiple generation paths:
+Draux Inc. supports multiple generation paths:
 
 - deterministic local rules;
 - local models through Ollama;

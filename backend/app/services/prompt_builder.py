@@ -3,42 +3,35 @@ from __future__ import annotations
 from collections import defaultdict
 
 from ..models import ChecklistItem, ChecklistParseResult
-
-
-FONTE_LABELS = {
-    "site_orgao": "Site do orgao",
-    "portal_transparencia": "Portal da Transparencia",
-    "esic": "e-SIC",
-    "nao_informada": "Fonte nao identificada",
-}
+from .report_terms import SOURCE_ORDER, entity_display_name, source_label
 
 
 class PromptBuilder:
     def build(self, payload: ChecklistParseResult) -> str:
         grouped = self._group_by_source(payload.itens_processados)
         allowed_status = ", ".join(payload.parser_options.allowed_status)
+        entity_name = entity_display_name(payload.orgao, payload.tipo_orgao)
 
         metadata_lines = [
-            "Voce e um redator tecnico responsavel por redigir trechos de um relatorio tecnico sobre transparencia publica.",
+            "Voce e um redator tecnico encarregado de redigir trechos de um relatorio tecnico analitico.",
             "Use exclusivamente as informacoes fornecidas abaixo.",
             "Nao invente fatos, nao complemente dados ausentes e nao afirme cumprimento quando o registro indicar problema.",
-            "Escreva em portugues formal, objetiva, impessoal e compatível com relatórios técnicos administrativos.",
+            "Escreva em portugues formal, objetiva, impessoal e compativel com relatorios tecnicos profissionais.",
+            "Nao presuma setor, esfera institucional ou obrigacoes regulatorias que nao estejam explicitamente descritas nos dados.",
             "Organize a resposta por fonte de consulta.",
             f"Considere apenas apontamentos com status: {allowed_status}.",
             "Quando houver observacao, ela deve ser o principal fundamento do texto.",
             "Quando nao houver observacao, redija de forma conservadora com base apenas na descricao do item e no status.",
             "Nao cite anexos, figuras ou evidencias visuais que nao tenham sido fornecidos no prompt.",
             "",
-            f"Orgao analisado: {payload.orgao or 'Nao informado'}",
-            f"Tipo de orgao: {payload.tipo_orgao or 'Nao informado'}",
+            f"Entidade analisada: {entity_name}",
+            f"Tipo de entidade: {payload.tipo_orgao or 'Nao informado'}",
             f"Periodo da analise: {payload.periodo_analise or 'Nao informado'}",
             f"Grupos considerados: {', '.join(payload.grupos_permitidos)}",
             "",
             "Formato de saida desejado:",
             "1. RESULTADOS OBTIDOS",
-            "   - Subsecao Site do orgao",
-            "   - Subsecao Portal da Transparencia",
-            "   - Subsecao Sistema e-SIC",
+            "   - Subsecao por fonte monitorada",
             "2. RECOMENDACOES",
             "   - Organizadas pelas mesmas fontes",
             "3. QUESITO - RESUMO",
@@ -53,9 +46,9 @@ class PromptBuilder:
         ]
 
         sections: list[str] = []
-        for source_key in ("site_orgao", "portal_transparencia", "esic", "nao_informada"):
+        for source_key in SOURCE_ORDER:
             items = grouped.get(source_key, [])
-            sections.append(f"## {FONTE_LABELS[source_key]}")
+            sections.append(f"## {source_label(source_key)}")
             if not items:
                 sections.append("- Sem apontamentos.")
                 continue

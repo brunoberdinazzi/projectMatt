@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 from pathlib import Path
+from time import perf_counter
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -44,13 +45,15 @@ from .services.technical_report_composer import TechnicalReportComposer
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = BASE_DIR / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
+FRONTEND_STATIC_DIR = FRONTEND_DIST_DIR / "static"
 
 app = FastAPI(
-    title="Matt Backend MVP",
+    title="Draux Inc. Backend",
     version="0.1.0",
     description="Backend inicial para leitura de checklist, montagem de prompt e geracao de relatorio.",
 )
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+app.mount("/static", StaticFiles(directory=FRONTEND_STATIC_DIR, check_dir=False), name="static")
 
 prompt_builder = PromptBuilder()
 report_content_builder = ReportContentBuilder()
@@ -65,7 +68,54 @@ analysis_context_builder = AnalysisContextBuilder()
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
-    return HTMLResponse((FRONTEND_DIR / "index.html").read_text(encoding="utf-8"))
+    index_path = FRONTEND_DIST_DIR / "index.html"
+    if not index_path.exists():
+        return HTMLResponse(
+            """
+            <!doctype html>
+            <html lang="pt-BR">
+              <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <title>Draux Inc. | Frontend nao encontrado</title>
+                <style>
+                  body {
+                    margin: 0;
+                    min-height: 100vh;
+                    display: grid;
+                    place-items: center;
+                    background: #0c1726;
+                    color: #f6efe4;
+                    font-family: system-ui, sans-serif;
+                  }
+                  main {
+                    width: min(640px, calc(100% - 32px));
+                    padding: 24px;
+                    border-radius: 20px;
+                    background: rgba(255, 255, 255, 0.06);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                  }
+                  code {
+                    display: inline-block;
+                    margin-top: 12px;
+                    padding: 8px 10px;
+                    border-radius: 10px;
+                    background: rgba(255, 255, 255, 0.08);
+                  }
+                </style>
+              </head>
+              <body>
+                <main>
+                  <h1>Build do frontend nao encontrado.</h1>
+                  <p>Execute o build do app React antes de abrir a interface pelo FastAPI.</p>
+                  <code>npm --prefix frontend install && npm --prefix frontend run build</code>
+                </main>
+              </body>
+            </html>
+            """,
+            status_code=503,
+        )
+    return HTMLResponse(index_path.read_text(encoding="utf-8"))
 
 
 @app.get("/health")
@@ -96,12 +146,15 @@ def scrape_links(url: str, max_links: int = 40, crawl_depth: int = 1, max_pages:
         raise HTTPException(status_code=400, detail="Use max_pages entre 0 e 20.")
 
     try:
-        return link_scraper.crawl(
+        started_at = perf_counter()
+        result = link_scraper.crawl(
             url=url,
             max_links=max_links,
             max_depth=crawl_depth,
             max_pages=max_pages,
         )
+        duration_ms = int(round((perf_counter() - started_at) * 1000))
+        return result.model_copy(update={"processing_time_ms": duration_ms})
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
@@ -234,12 +287,14 @@ async def review_analysis(
             equipe_tecnica=equipe_tecnica,
             relatorio_contabil_referencia=relatorio_contabil_referencia,
         )
+        scrape_started_at = perf_counter()
         parsed.scraped_pages = _scrape_pages_for_analysis(parsed)
+        scrape_duration_ms = int(round((perf_counter() - scrape_started_at) * 1000))
         parsed.database_summary = analysis_context_builder.build_summary(parsed)
         analysis_id = analysis_store.create_analysis(parsed, source_filename=file.filename)
         parsed.analysis_id = analysis_id
         analysis_store.update_analysis(analysis_id, parsed)
-        return _build_review_response(analysis_id, parsed)
+        return _build_review_response(analysis_id, parsed, scrape_duration_ms=scrape_duration_ms)
     finally:
         temp_path.unlink(missing_ok=True)
 
@@ -509,7 +564,11 @@ def _parse_uploaded_workbook(
     return parser.parse(workbook_path, source_name=source_name)
 
 
-def _build_review_response(analysis_id: int, parsed: ChecklistParseResult) -> AnalysisReviewResponse:
+def _build_review_response(
+    analysis_id: int,
+    parsed: ChecklistParseResult,
+    scrape_duration_ms: Optional[int] = None,
+) -> AnalysisReviewResponse:
     summary = parsed.database_summary or analysis_context_builder.build_summary(parsed)
     prompt_preview = prompt_builder.build(parsed)
     return AnalysisReviewResponse(
@@ -522,6 +581,7 @@ def _build_review_response(analysis_id: int, parsed: ChecklistParseResult) -> An
             warning_count=len(parsed.warnings),
             scraped_page_count=len(parsed.scraped_pages),
             scraped_link_count=sum(len(page.links) for page in parsed.scraped_pages),
+            scrape_duration_ms=scrape_duration_ms,
         ),
     )
 
@@ -540,7 +600,9 @@ def _generate_report_file_response(
     if generation_mode not in {"auto", "ai", "local", "rules"}:
         raise HTTPException(status_code=400, detail="Modo de geracao invalido. Use auto, ai, local ou rules.")
 
+    generation_started_at = perf_counter()
     dynamic_payload = _build_generated_report(parsed, generation_mode, output_format, local_model=local_model)
+    generation_duration_ms = int(round((perf_counter() - generation_started_at) * 1000))
     report_payload = technical_report_composer.compose(parsed, dynamic_payload.report)
     report_path = report_builder.build(
         report_payload,
@@ -559,6 +621,7 @@ def _generate_report_file_response(
         update={
             "requested_mode": generation_mode,
             "output_format": output_format,
+            "duration_ms": generation_duration_ms,
         }
     )
     generation_event_id = analysis_store.record_generation(analysis_id, trace)
@@ -574,6 +637,7 @@ def _generate_report_file_response(
         "X-Generation-Event-ID": str(generation_event_id),
         "X-Generation-Mode": trace.used_mode,
         "X-Generation-Provider": trace.provider,
+        "X-Generation-Duration-Ms": str(trace.duration_ms or 0),
     }
     if trace.model_name:
         headers["X-Generation-Model"] = trace.model_name

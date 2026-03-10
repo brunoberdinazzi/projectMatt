@@ -15,6 +15,7 @@ from ..models import (
     ReportSection,
 )
 from .report_metadata import build_report_title
+from .report_terms import SOURCE_ORDER, entity_display_name, source_section_title
 
 
 class OllamaReportContentBuilder:
@@ -89,6 +90,7 @@ class OllamaReportContentBuilder:
         )
 
     def _build_prompt(self, payload: ChecklistParseResult) -> str:
+        entity_name = entity_display_name(payload.orgao, payload.tipo_orgao)
         achados = []
         for item in payload.itens_processados:
             achados.append(
@@ -136,20 +138,21 @@ class OllamaReportContentBuilder:
             )
 
         sections = [
-            {"fonte": "site_orgao", "titulo": "Resultados Obtidos - Site Oficial do Orgao"},
-            {"fonte": "portal_transparencia", "titulo": "Resultados Obtidos - Portal da Transparencia"},
-            {"fonte": "esic", "titulo": "Resultados Obtidos - Sistema e-SIC"},
-            {"fonte": "nao_informada", "titulo": "Resultados Obtidos - Fonte nao identificada"},
-            {"fonte": "site_orgao", "titulo": "Recomendacoes - Site Oficial do Orgao"},
-            {"fonte": "portal_transparencia", "titulo": "Recomendacoes - Portal da Transparencia"},
-            {"fonte": "esic", "titulo": "Recomendacoes - Sistema e-SIC"},
-            {"fonte": "nao_informada", "titulo": "Recomendacoes - Fonte nao identificada"},
+            *[
+                {"fonte": source_key, "titulo": source_section_title("Resultados Obtidos", source_key)}
+                for source_key in SOURCE_ORDER
+            ],
+            *[
+                {"fonte": source_key, "titulo": source_section_title("Recomendacoes", source_key)}
+                for source_key in SOURCE_ORDER
+            ],
             {"fonte": "nao_informada", "titulo": "Quesito - Sintese das Recomendacoes"},
             {"fonte": "nao_informada", "titulo": "Conclusao"},
         ]
 
         context = {
             "analysis_id": payload.analysis_id,
+            "entidade_analisada": entity_name,
             "orgao": payload.orgao,
             "tipo_orgao": payload.tipo_orgao,
             "periodo_analise": payload.periodo_analise,
@@ -162,15 +165,16 @@ class OllamaReportContentBuilder:
 
         return "\n".join(
             [
-                "Voce vai redigir secoes variaveis de um relatorio tecnico institucional de transparencia publica.",
+                "Voce vai redigir secoes variaveis de um relatorio tecnico analitico com base em checklist estruturado e evidencias complementares.",
                 "Escreva em portugues formal, tecnica, objetiva e impessoal.",
-                "Adote tom de parecer tecnico institucional.",
+                "Adote tom tecnico profissional, claro e nao promocional.",
                 "Use exclusivamente os dados fornecidos. Nao invente fatos.",
+                "Nao presuma setor, esfera institucional ou marco regulatorio alem do que estiver explicitamente descrito nos dados.",
                 "Considere o contexto recuperado do banco e do scraper apenas para contextualizacao complementar.",
                 "Nas secoes de resultados, prefira formulacoes como 'Constatou-se', 'Verificou-se', 'Cabe destacar' e 'Por fim', quando cabiveis.",
                 "Nas secoes de recomendacoes, contextualize a irregularidade e apresente a providencia de forma objetiva.",
                 "Na secao de quesito, sintetize a necessidade de recomendacoes tecnicas por fonte.",
-                "Na conclusao, produza texto curto, institucional e sem repeticao integral dos resultados.",
+                "Na conclusao, produza texto curto, objetivo e coerente com o contexto informado, sem repeticao integral dos resultados.",
                 "Nao repita o enunciado, nao explique o formato e nao use markdown.",
                 "Retorne apenas o objeto JSON final compativel com o schema recebido.",
                 "",
@@ -237,17 +241,28 @@ class OllamaReportContentBuilder:
             )
 
         return {
-            "titulo_relatorio": str(payload.get("titulo_relatorio") or "Relatorio Tecnico de Transparencia").strip(),
+            "titulo_relatorio": str(payload.get("titulo_relatorio") or "Relatorio Tecnico de Analise").strip(),
             "secoes": normalized_sections,
         }
 
     def _normalize_source(self, value: Optional[str]) -> str:
         normalized = (value or "").strip().lower()
-        if normalized in {"site_orgao", "site oficial do orgao", "site oficial do órgão", "site do orgao"}:
+        if normalized in {
+            "site_orgao",
+            "site oficial do orgao",
+            "site oficial do órgão",
+            "site do orgao",
+            "canal principal",
+        }:
             return "site_orgao"
-        if normalized in {"portal_transparencia", "portal da transparencia", "portal da transparência"}:
+        if normalized in {
+            "portal_transparencia",
+            "portal da transparencia",
+            "portal da transparência",
+            "canal complementar",
+        }:
             return "portal_transparencia"
-        if normalized in {"esic", "e-sic", "sistema e-sic"}:
+        if normalized in {"esic", "e-sic", "sistema e-sic", "canal de atendimento"}:
             return "esic"
         return "nao_informada"
 

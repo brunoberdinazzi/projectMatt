@@ -104,6 +104,7 @@ class ScrapePageResult(BaseModel):
     links: list[ScrapedLink] = Field(default_factory=list)
     discovered_pages: list["ScrapedPageRecord"] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    processing_time_ms: Optional[int] = None
 
 
 class ScrapedPageRecord(BaseModel):
@@ -135,6 +136,7 @@ class AnalysisReviewStats(BaseModel):
     warning_count: int = 0
     scraped_page_count: int = 0
     scraped_link_count: int = 0
+    scrape_duration_ms: Optional[int] = None
 
 
 class AnalysisReviewResponse(BaseModel):
@@ -161,6 +163,7 @@ class GenerationTrace(BaseModel):
     prompt_snapshot: Optional[str] = None
     raw_response: Optional[str] = None
     fallback_reason: Optional[str] = None
+    duration_ms: Optional[int] = None
     created_at: Optional[str] = None
 
 

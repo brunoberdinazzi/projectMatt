@@ -14,6 +14,7 @@ from ..models import (
     ReportSection,
 )
 from .report_metadata import build_report_title
+from .report_terms import SOURCE_ORDER, entity_display_name, source_section_title
 
 
 class OpenAIReportContentBuilder:
@@ -62,6 +63,7 @@ class OpenAIReportContentBuilder:
         )
 
     def _build_prompt(self, payload: ChecklistParseResult) -> str:
+        entity_name = entity_display_name(payload.orgao, payload.tipo_orgao)
         achados = []
         for item in payload.itens_processados:
             achados.append(
@@ -109,17 +111,18 @@ class OpenAIReportContentBuilder:
             )
 
         instructions = {
-            "tarefa": "Gerar as secoes variaveis de um relatorio tecnico institucional de transparencia publica.",
+            "tarefa": "Gerar as secoes variaveis de um relatorio tecnico analitico a partir de checklist estruturado e evidencias complementares.",
             "regras": [
                 "Use exclusivamente as informacoes fornecidas.",
                 "Nao invente fatos e nao mencione anexos ou figuras nao informados.",
                 "Escreva em portugues formal, tecnica, objetiva e impessoal.",
-                "Adote tom de parecer tecnico institucional.",
+                "Adote tom tecnico profissional, claro e nao promocional.",
+                "Nao presuma setor, esfera institucional ou marco regulatorio alem do que estiver explicitamente descrito nos dados.",
                 "Considere o contexto recuperado do banco e do scraper apenas como apoio para contextualizacao; os achados do checklist continuam sendo a fonte principal das conclusoes.",
                 "Nas secoes de resultados, utilize formulacoes como 'Constatou-se', 'Verificou-se', 'Cabe destacar' e 'Por fim', quando couber.",
                 "Nas secoes de recomendacoes, primeiro contextualize brevemente a irregularidade e depois apresente a providencia com formulacao impessoal e objetiva.",
                 "Na secao de quesito, responda de forma sintese se ha necessidade de recomendacoes tecnicas e consolide os pontos por fonte.",
-                "Na conclusao, produza texto curto e institucional, sem repetir integralmente os resultados.",
+                "Na conclusao, produza texto curto, objetivo e coerente com o contexto informado, sem repetir integralmente os resultados.",
                 "Se nao houver achados para uma fonte, informe isso de forma curta.",
                 "Retorne somente JSON valido, sem markdown e sem texto fora do JSON.",
             ],
@@ -134,19 +137,20 @@ class OpenAIReportContentBuilder:
                 ],
             },
             "secoes_obrigatorias": [
-                {"fonte": "site_orgao", "titulo": "Resultados Obtidos - Site Oficial do Orgao"},
-                {"fonte": "portal_transparencia", "titulo": "Resultados Obtidos - Portal da Transparencia"},
-                {"fonte": "esic", "titulo": "Resultados Obtidos - Sistema e-SIC"},
-                {"fonte": "nao_informada", "titulo": "Resultados Obtidos - Fonte nao identificada"},
-                {"fonte": "site_orgao", "titulo": "Recomendacoes - Site Oficial do Orgao"},
-                {"fonte": "portal_transparencia", "titulo": "Recomendacoes - Portal da Transparencia"},
-                {"fonte": "esic", "titulo": "Recomendacoes - Sistema e-SIC"},
-                {"fonte": "nao_informada", "titulo": "Recomendacoes - Fonte nao identificada"},
+                *[
+                    {"fonte": source_key, "titulo": source_section_title("Resultados Obtidos", source_key)}
+                    for source_key in SOURCE_ORDER
+                ],
+                *[
+                    {"fonte": source_key, "titulo": source_section_title("Recomendacoes", source_key)}
+                    for source_key in SOURCE_ORDER
+                ],
                 {"fonte": "nao_informada", "titulo": "Quesito - Sintese das Recomendacoes"},
                 {"fonte": "nao_informada", "titulo": "Conclusao"},
             ],
             "contexto": {
                 "analysis_id": payload.analysis_id,
+                "entidade_analisada": entity_name,
                 "orgao": payload.orgao,
                 "tipo_orgao": payload.tipo_orgao,
                 "periodo_analise": payload.periodo_analise,

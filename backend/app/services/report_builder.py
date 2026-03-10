@@ -15,6 +15,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 from ..models import ReportBuildRequest
+from .report_terms import entity_display_name
 
 
 class ReportBuilder:
@@ -47,9 +48,9 @@ class ReportBuilder:
         document.add_heading(payload.titulo_relatorio, level=0)
 
         if payload.orgao:
-            document.add_paragraph(f"Orgao: {payload.orgao}")
+            document.add_paragraph(f"Entidade: {payload.orgao}")
         if payload.tipo_orgao:
-            document.add_paragraph(f"Tipo de orgao: {payload.tipo_orgao}")
+            document.add_paragraph(f"Tipo de entidade: {payload.tipo_orgao}")
         if payload.periodo_analise:
             document.add_paragraph(f"Periodo da analise: {payload.periodo_analise}")
 
@@ -70,7 +71,7 @@ class ReportBuilder:
     def _add_cover_page(self, document: Document, payload: ReportBuildRequest) -> None:
         title = document.add_paragraph(style="Normal")
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = title.add_run("ANALISE E PARECER TECNICO")
+        run = title.add_run("RELATORIO TECNICO")
         run.bold = True
         run.font.size = Pt(15)
 
@@ -82,7 +83,7 @@ class ReportBuilder:
             run.font.size = Pt(11)
 
         for line in (
-            f"Promotoria: {payload.promotoria}" if payload.promotoria else None,
+            f"Solicitante: {payload.promotoria}" if payload.promotoria else None,
             f"Referencia: {payload.referencia}" if payload.referencia else None,
             f"Solicitacao: {payload.solicitacao}" if payload.solicitacao else None,
         ):
@@ -142,14 +143,7 @@ class ReportBuilder:
         return path if path.exists() else None
 
     def _cover_orgao_label(self, payload: ReportBuildRequest) -> str:
-        if not payload.orgao:
-            return ""
-        if not payload.tipo_orgao:
-            return payload.orgao
-        tipo = payload.tipo_orgao.strip().lower()
-        if tipo == "camara":
-            return f"Camara Municipal de {payload.orgao}"
-        return f"Prefeitura Municipal de {payload.orgao}"
+        return entity_display_name(payload.orgao, payload.tipo_orgao).replace("entidade nao informada", "")
 
     def _cover_period_label(self, date_text: Optional[str]) -> Optional[str]:
         if not date_text:
@@ -185,8 +179,8 @@ class ReportBuilder:
         story = [Paragraph(payload.titulo_relatorio, styles["DocTitle"]), Spacer(1, 0.35 * cm)]
 
         metadata_lines = [
-            f"Orgao: {payload.orgao}" if payload.orgao else None,
-            f"Tipo de orgao: {payload.tipo_orgao}" if payload.tipo_orgao else None,
+            f"Entidade: {payload.orgao}" if payload.orgao else None,
+            f"Tipo de entidade: {payload.tipo_orgao}" if payload.tipo_orgao else None,
             f"Periodo da analise: {payload.periodo_analise}" if payload.periodo_analise else None,
         ]
         for line in metadata_lines:

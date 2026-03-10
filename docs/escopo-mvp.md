@@ -20,7 +20,7 @@ manual rewriting of every finding.
 ## In scope
 
 - workbook parsing;
-- narrow extraction scope for predictable results;
+- narrow base extraction scope for predictable results, with room for broader profiles;
 - metadata form ingestion;
 - SQLite persistence;
 - link scraping for contextual enrichment;
