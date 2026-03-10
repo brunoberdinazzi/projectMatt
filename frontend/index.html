@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Matt | Spreadsheet to Report</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">Matt</p>
+        <h1>Spreadsheet to report with AI</h1>
+        <p class="lead">
+          Envie uma planilha estruturada. O sistema interpreta os itens relevantes,
+          enriquece o contexto e devolve um relatorio em DOCX ou PDF.
+        </p>
+      </section>
+
+      <section class="panel">
+        <form id="report-form" class="form">
+          <label class="field field-file">
+            <span>Planilha Excel</span>
+            <input id="file" name="file" type="file" accept=".xlsx,.xlsm" required />
+          </label>
+
+          <label class="field field-file">
+            <span>Template DOCX do relatorio (opcional)</span>
+            <input id="template_file" name="template_file" type="file" accept=".docx" />
+          </label>
+
+          <div class="grid">
+            <label class="field">
+              <span>Formato de saida</span>
+              <select id="output_format" name="output_format">
+                <option value="docx">DOCX</option>
+                <option value="pdf">PDF</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Modo de geracao</span>
+              <select id="generation_mode" name="generation_mode">
+                <option value="auto">Auto</option>
+                <option value="local">Local (Ollama)</option>
+                <option value="ai">IA</option>
+                <option value="rules">Regras</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
+              <span>Modelo local do Ollama (opcional)</span>
+              <select
+                id="local_model"
+                name="local_model"
+              >
+                <option value="">Selecao automatica</option>
+              </select>
+              <small id="ollama-models-hint">Se vazio, o backend escolhe o melhor modelo instalado.</small>
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
+              <span>Periodo da analise</span>
+              <input
+                id="periodo_analise"
+                name="periodo_analise"
+                type="text"
+                placeholder="Ex.: Ciclo Q4/2025"
+              />
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
+              <span>Numero do documento</span>
+              <input
+                id="numero_relatorio"
+                name="numero_relatorio"
+                type="text"
+                placeholder="Ex.: REP-022/2025"
+              />
+            </label>
+
+            <label class="field">
+              <span>Ticket ou solicitacao</span>
+              <input
+                id="solicitacao"
+                name="solicitacao"
+                type="text"
+                placeholder="Ex.: TASK-5492"
+              />
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
+              <span>Area solicitante</span>
+              <input
+                id="requester_area"
+                name="requester_area"
+                type="text"
+                placeholder="Ex.: Operacoes, Auditoria ou PMO"
+              />
+            </label>
+
+            <label class="field">
+              <span>Referencia</span>
+              <input
+                id="referencia"
+                name="referencia"
+                type="text"
+                placeholder="Ex.: PROC-09.2024.00009414-6"
+              />
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
+              <span>Local de emissao</span>
+              <input
+                id="cidade_emissao"
+                name="cidade_emissao"
+                type="text"
+                placeholder="Ex.: Sao Paulo/SP"
+              />
+            </label>
+
+            <label class="field">
+              <span>Data de emissao</span>
+              <input
+                id="data_emissao"
+                name="data_emissao"
+                type="text"
+                placeholder="Ex.: 18 de dezembro de 2025"
+              />
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field">
+              <span>Periodo de coleta</span>
+              <input
+                id="periodo_coleta"
+                name="periodo_coleta"
+                type="text"
+                placeholder="Ex.: entre 12 e 16 de dezembro de 2025"
+              />
+            </label>
+
+            <label class="field">
+              <span>Documento de referencia</span>
+              <input
+                id="relatorio_contabil_referencia"
+                name="relatorio_contabil_referencia"
+                type="text"
+                placeholder="Ex.: DOC-145/2025"
+              />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Equipe tecnica</span>
+            <textarea
+              id="equipe_tecnica"
+              name="equipe_tecnica"
+              rows="3"
+              placeholder="Ex.: Nome do responsavel - Cargo - Especialidade"
+            ></textarea>
+          </label>
+
+          <div class="grid">
+            <label class="field">
+              <span>Entidade</span>
+              <input id="orgao" name="orgao" type="text" placeholder="Opcional" />
+            </label>
+
+            <label class="field">
+              <span>Perfil de layout</span>
+              <select id="layout_profile" name="layout_profile">
+                <option value="">Detectar automaticamente</option>
+                <option value="profile_a">Perfil A</option>
+                <option value="profile_b">Perfil B</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="submit-button" type="submit">Gerar relatorio</button>
+            <p id="status" class="status">Aguardando envio.</p>
+          </div>
+        </form>
+      </section>
+
+      <section class="notes">
+        <div class="note-card">
+          <h2>O que este MVP faz</h2>
+          <p>
+            Le a planilha principal, localiza os itens relevantes,
+            organiza os achados por fonte e monta o relatorio automaticamente.
+          </p>
+        </div>
+        <div class="note-card">
+          <h2>Template DOCX</h2>
+          <p>
+            Se voce enviar um modelo de relatorio em <code>.docx</code>, o arquivo
+            final em <code>DOCX</code> preserva cabecalho, rodape, logo e estilos do template.
+          </p>
+        </div>
+      </section>
+
+      <section class="panel panel-scraper">
+        <div class="hero hero-compact">
+          <p class="eyebrow">Link Scraper</p>
+          <h2>Analise uma pagina antes do relatorio</h2>
+          <p class="lead">
+            Informe uma URL inicial. O sistema extrai os links, tenta entender
+            o contexto e mostra para onde cada referencia aponta.
+          </p>
+        </div>
+
+        <form id="scrape-form" class="form">
+          <div class="grid">
+            <label class="field">
+              <span>URL da pagina</span>
+              <input
+                id="scrape_url"
+                name="scrape_url"
+                type="url"
+                placeholder="Ex.: https://example.com/"
+                required
+              />
+            </label>
+
+            <label class="field">
+              <span>Maximo de links</span>
+              <input
+                id="scrape_max_links"
+                name="scrape_max_links"
+                type="number"
+                min="1"
+                max="200"
+                value="40"
+              />
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="scrape-button" type="submit">Analisar links</button>
+            <p id="scrape-status" class="status">Aguardando URL.</p>
+          </div>
+        </form>
+
+        <div id="scrape-result" class="scrape-result" hidden></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
