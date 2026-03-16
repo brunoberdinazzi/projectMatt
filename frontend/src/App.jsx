@@ -22,6 +22,7 @@ import {
   Filter,
   Globe2,
   History,
+  Layers3,
   Link2,
   Radar,
   ScanSearch,
@@ -129,6 +130,14 @@ const PROVIDER_LABELS = {
   ollama: "Ollama",
   openai: "OpenAI",
   rules: "Regras locais",
+};
+
+const WORKBOOK_LAYER_LABELS = {
+  checklist_scope: "Escopo de checklist",
+  reference_framework: "Matriz de referencia",
+  entity_reference: "Referencia especifica da entidade",
+  registry_snapshot: "Registro cadastral",
+  outcome_matrix: "Matriz de resultado",
 };
 
 const PANEL_VARIANTS = {
@@ -560,14 +569,17 @@ export default function App() {
 
   const reviewWarningCount = deferredReview?.parsed?.warnings?.length ?? 0;
   const reviewItemCount = deferredReview?.parsed?.itens_processados?.length ?? 0;
+  const reviewLayerCount = deferredReview?.parsed?.context_layers?.length ?? 0;
   const reviewPageCount = deferredReview?.parsed?.scraped_pages?.length ?? 0;
   const reviewHistoryCount = generationHistoryState.items.length;
+  const reviewSheetNames = deferredReview?.parsed?.parser_options?.checklist_sheet_names || [];
   const scrapeWarningCount = scrapeResult?.warnings?.length ?? 0;
   const scrapeLinkCount = scrapeResult?.links?.length ?? 0;
   const scrapePageCount = scrapeResult?.discovered_pages?.length ?? 0;
 
   const reviewTabs = [
     { key: "overview", label: "Resumo", icon: Radar, count: reviewWarningCount },
+    { key: "layers", label: "Camadas", icon: Layers3, count: reviewLayerCount },
     { key: "items", label: "Itens", icon: FileSearch, count: reviewItemCount },
     { key: "crawler", label: "Crawler", icon: Globe2, count: reviewPageCount },
     { key: "prompt", label: "Prompt", icon: FileText },
@@ -699,7 +711,8 @@ export default function App() {
               </div>
               <p className="panel-copy">
                 O formulario separa claramente o que entra na leitura da planilha, o que afeta a
-                auditoria e o que alimenta capa e narrativa do documento final.
+                auditoria e o que alimenta capa e narrativa do documento final. O parser tambem
+                pode consolidar varias abas de checklist na mesma revisao.
               </p>
             </div>
 
@@ -825,8 +838,9 @@ export default function App() {
                     onChange={(event) => applyFormValue("allowedStatus", event.target.value)}
                   />
                   <TextField
-                    label="Nome da aba do checklist"
-                    placeholder="Padrao: Checklist"
+                    label="Abas do checklist"
+                    helper="Opcional. Deixe em branco para detectar automaticamente ou informe varias abas separadas por virgula."
+                    placeholder="Ex.: Checklist, Checklist Complementar"
                     value={formState.checklistSheetName}
                     onChange={(event) => applyFormValue("checklistSheetName", event.target.value)}
                   />
@@ -970,10 +984,11 @@ export default function App() {
                     <h2>Valide o contexto antes de exportar</h2>
                   </div>
                   <p className="panel-copy">
-                    Este painel deixa explicito o papel de cada bloco: alertas, itens elegiveis,
-                    evidencias de crawler, prompt de composicao e historico de execucoes. Na
-                    revisao automatica, o crawler parte dos links estruturais detectados na
-                    planilha: site principal, portal complementar e canal de atendimento.
+                    Este painel deixa explicito o papel de cada bloco: alertas, camadas abstratas
+                    do workbook, itens elegiveis, evidencias de crawler, prompt de composicao e
+                    historico de execucoes. Na revisao automatica, o crawler parte dos links
+                    estruturais detectados na planilha: site principal, portal complementar e
+                    canal de atendimento.
                   </p>
                 </div>
 
@@ -987,6 +1002,11 @@ export default function App() {
                     icon={AlertTriangle}
                     title="Alertas"
                     copy="Sinalizam perda de leitura, ambiguidades ou pontos que exigem revisao manual."
+                  />
+                  <GuideCard
+                    icon={Layers3}
+                    title="Camadas do workbook"
+                    copy="Consolidam abas heterogeneas em blocos abstratos de contexto para a leitura do caso."
                   />
                   <GuideCard
                     icon={FileSearch}
@@ -1011,6 +1031,16 @@ export default function App() {
                     )}
                   />
                   <MetricCard
+                    icon={FileSpreadsheet}
+                    label="Abas"
+                    value={String(reviewSheetNames.length || 1)}
+                  />
+                  <MetricCard
+                    icon={Layers3}
+                    label="Camadas"
+                    value={String(reviewLayerCount)}
+                  />
+                  <MetricCard
                     icon={Waypoints}
                     label="Grupos"
                     value={(deferredReview.parsed?.parser_options?.allowed_groups || []).join(", ") || "-"}
@@ -1021,7 +1051,7 @@ export default function App() {
                     value={(deferredReview.parsed?.parser_options?.allowed_status || []).join(", ") || "-"}
                   />
                   <MetricCard
-                    icon={FileSpreadsheet}
+                    icon={FileSearch}
                     label="Itens elegiveis"
                     value={String(deferredReview.stats?.extracted_item_count ?? 0)}
                   />
@@ -1078,6 +1108,61 @@ export default function App() {
                           )}
                         </ReviewSection>
 
+                        <article className="summary-card">
+                          <div className="card-head">
+                            <div>
+                              <h3>Abas consolidadas na leitura</h3>
+                              <p className="meta-line">
+                                {reviewSheetNames.length
+                                  ? `${reviewSheetNames.length} aba(s) considerada(s) pelo parser.`
+                                  : "O parser nao retornou nomes de abas nesta analise."}
+                              </p>
+                            </div>
+                            <StatusPill tone="neutral" icon={FileSpreadsheet}>
+                              Multi-aba
+                            </StatusPill>
+                          </div>
+                          {reviewSheetNames.length ? (
+                            <div className="trace-badges">
+                              {reviewSheetNames.map((sheetName) => (
+                                <Tag key={sheetName} icon={FileSpreadsheet}>
+                                  {sheetName}
+                                </Tag>
+                              ))}
+                            </div>
+                          ) : (
+                            <EmptyBlock message="Nenhuma aba especifica foi reportada pelo parser." />
+                          )}
+                        </article>
+
+                        <article className="summary-card">
+                          <div className="card-head">
+                            <div>
+                              <h3>Camadas abstratas extraidas do workbook</h3>
+                              <p className="meta-line">
+                                {reviewLayerCount
+                                  ? `${reviewLayerCount} camada(s) contextual(is) estruturada(s) para apoiar a composicao.`
+                                  : "Nenhuma camada complementar foi estruturada nesta analise."}
+                              </p>
+                            </div>
+                            <StatusPill tone="neutral" icon={Layers3}>
+                              Contexto abstrato
+                            </StatusPill>
+                          </div>
+                          {Array.isArray(deferredReview.parsed?.context_layers) &&
+                          deferredReview.parsed.context_layers.length ? (
+                            <div className="trace-badges">
+                              {deferredReview.parsed.context_layers.map((layer, index) => (
+                                <Tag key={`${layer.layer_type}-${layer.sheet_name}-${index}`} icon={Layers3}>
+                                  {humanizeLayerType(layer.layer_type)}
+                                </Tag>
+                              ))}
+                            </div>
+                          ) : (
+                            <EmptyBlock message="O parser nao devolveu camadas estruturadas para este workbook." />
+                          )}
+                        </article>
+
                         <ReviewSection
                           title="Resumo consolidado da analise"
                           subtitle="Sintese textual do contexto consolidado antes da composicao."
@@ -1085,6 +1170,70 @@ export default function App() {
                           <PreBlock text={deferredReview.summary || "Sem resumo consolidado."} />
                         </ReviewSection>
                       </div>
+                    ) : null}
+
+                    {activeReviewTab === "layers" ? (
+                      <ReviewSection
+                        title="Camadas abstratas do workbook"
+                        subtitle="Cada card resume uma aba ou matriz heterogenea transformada em contexto estruturado."
+                      >
+                        {Array.isArray(deferredReview.parsed?.context_layers) &&
+                        deferredReview.parsed.context_layers.length ? (
+                          <div className="card-grid">
+                            {deferredReview.parsed.context_layers.map((layer, index) => (
+                              <article
+                                key={`${layer.layer_type}-${layer.sheet_name}-${index}`}
+                                className="data-card"
+                              >
+                                <div className="card-head">
+                                  <div>
+                                    <h3>{layer.title}</h3>
+                                    <p className="meta-line">
+                                      {humanizeLayerType(layer.layer_type)} | Aba {layer.sheet_name}
+                                    </p>
+                                  </div>
+                                  <StatusPill tone="neutral" icon={Layers3}>
+                                    {layer.details?.length || 0} detalhe(s)
+                                  </StatusPill>
+                                </div>
+                                <p className="body-copy strong-copy">{layer.summary}</p>
+                                {Array.isArray(layer.details) && layer.details.length ? (
+                                  <ul className="detail-list">
+                                    {layer.details.map((detail, detailIndex) => (
+                                      <li key={`${layer.title}-detail-${detailIndex}`}>{detail}</li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="meta-line">Sem detalhes adicionais estruturados nesta camada.</p>
+                                )}
+                                {Array.isArray(layer.references) && layer.references.length ? (
+                                  <ul className="detail-list">
+                                    {layer.references.map((reference, referenceIndex) => (
+                                      <li key={`${layer.title}-reference-${referenceIndex}`}>
+                                        {isLikelyUrl(reference) ? (
+                                          <a
+                                            className="inline-link"
+                                            href={reference}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                          >
+                                            {reference}
+                                            <ArrowUpRight size={14} />
+                                          </a>
+                                        ) : (
+                                          reference
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </article>
+                            ))}
+                          </div>
+                        ) : (
+                          <EmptyBlock message="Nenhuma camada abstrata foi estruturada para esta planilha." />
+                        )}
+                      </ReviewSection>
                     ) : null}
 
                     {activeReviewTab === "items" ? (
@@ -1864,6 +2013,10 @@ function humanizeProvider(provider) {
   return PROVIDER_LABELS[provider] || provider || "Nao informado";
 }
 
+function humanizeLayerType(layerType) {
+  return WORKBOOK_LAYER_LABELS[layerType] || layerType || "Camada nao identificada";
+}
+
 function humanizeStatusTone(status) {
   if (status === "Sim") {
     return "ready";
@@ -1907,6 +2060,10 @@ function formatDuration(value) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes} min ${String(seconds).padStart(2, "0")} s`;
+}
+
+function isLikelyUrl(value) {
+  return /^https?:\/\//i.test(value || "");
 }
 
 function parseDurationValue(value) {

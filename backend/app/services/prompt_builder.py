@@ -23,11 +23,18 @@ class PromptBuilder:
             "Quando houver observacao, ela deve ser o principal fundamento do texto.",
             "Quando nao houver observacao, redija de forma conservadora com base apenas na descricao do item e no status.",
             "Nao cite anexos, figuras ou evidencias visuais que nao tenham sido fornecidos no prompt.",
+            "Use as camadas complementares do workbook apenas como contexto estruturado de apoio, sem substituir os achados elegiveis do checklist.",
             "",
             f"Entidade analisada: {entity_name}",
             f"Tipo de entidade: {payload.tipo_orgao or 'Nao informado'}",
             f"Periodo da analise: {payload.periodo_analise or 'Nao informado'}",
             f"Grupos considerados: {', '.join(payload.grupos_permitidos)}",
+            (
+                "Abas consolidadas: "
+                + ", ".join(payload.parser_options.checklist_sheet_names)
+                if payload.parser_options.checklist_sheet_names
+                else "Abas consolidadas: nao informadas"
+            ),
             "",
             "Formato de saida desejado:",
             "1. RESULTADOS OBTIDOS",
@@ -41,6 +48,9 @@ class PromptBuilder:
             "Transforme cada apontamento em linguagem narrativa, sem repetir mecanicamente o checklist.",
             "Nas recomendacoes, utilize verbos no imperativo tecnico, como publicar, corrigir, disponibilizar, assegurar, unificar.",
             "Se uma fonte estiver vazia, informe apenas que nao ha apontamentos para aquela fonte.",
+            "",
+            "Camadas complementares do workbook:",
+            *self._format_context_layers(payload),
             "",
             "Apontamentos estruturados:",
         ]
@@ -91,4 +101,19 @@ class PromptBuilder:
             lines.append(f"  Fundamentacao: {item.fundamentacao}")
         if item.aba_origem:
             lines.append(f"  Aba: {item.aba_origem}")
+        return lines
+
+    def _format_context_layers(self, payload: ChecklistParseResult) -> list[str]:
+        if not payload.context_layers:
+            return ["- Nenhuma camada complementar estruturada foi extraida do workbook."]
+
+        lines: list[str] = []
+        for layer in payload.context_layers:
+            lines.append(
+                f"- {layer.title} | tipo={layer.layer_type} | aba={layer.sheet_name} | resumo={layer.summary}"
+            )
+            for detail in layer.details[:4]:
+                lines.append(f"  detalhe: {detail}")
+            for reference in layer.references[:4]:
+                lines.append(f"  referencia: {reference}")
         return lines

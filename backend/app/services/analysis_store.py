@@ -13,6 +13,7 @@ from ..models import (
     ParserOptions,
     ScrapedLink,
     ScrapedPageRecord,
+    WorkbookContextLayer,
 )
 
 
@@ -55,10 +56,11 @@ class AnalysisStore:
                     fontes_disponiveis_json,
                     grupos_permitidos_json,
                     parser_options_json,
+                    context_layers_json,
                     generation_mode,
                     output_format,
                     database_summary
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_filename,
@@ -81,6 +83,7 @@ class AnalysisStore:
                     json.dumps(parsed.fontes_disponiveis),
                     json.dumps(parsed.grupos_permitidos),
                     parsed.parser_options.model_dump_json(),
+                    self._dump_context_layers(parsed.context_layers),
                     generation_mode,
                     output_format,
                     parsed.database_summary,
@@ -125,6 +128,7 @@ class AnalysisStore:
                     fontes_disponiveis_json = ?,
                     grupos_permitidos_json = ?,
                     parser_options_json = ?,
+                    context_layers_json = ?,
                     generation_mode = COALESCE(?, generation_mode),
                     output_format = COALESCE(?, output_format),
                     database_summary = ?
@@ -150,6 +154,7 @@ class AnalysisStore:
                     json.dumps(parsed.fontes_disponiveis),
                     json.dumps(parsed.grupos_permitidos),
                     parsed.parser_options.model_dump_json(),
+                    self._dump_context_layers(parsed.context_layers),
                     generation_mode,
                     output_format,
                     parsed.database_summary,
@@ -280,6 +285,7 @@ class AnalysisStore:
                 fontes_disponiveis=self._load_json_list(analysis_row["fontes_disponiveis_json"]),
                 grupos_permitidos=self._load_json_list(analysis_row["grupos_permitidos_json"]) or ["1", "5"],
                 parser_options=self._load_parser_options(analysis_row["parser_options_json"]),
+                context_layers=self._load_context_layers(analysis_row["context_layers_json"]),
                 database_summary=analysis_row["database_summary"],
                 warnings=[
                     row["warning"]
@@ -326,6 +332,7 @@ class AnalysisStore:
                     fontes_disponiveis_json TEXT,
                     grupos_permitidos_json TEXT,
                     parser_options_json TEXT,
+                    context_layers_json TEXT,
                     generation_mode TEXT,
                     output_format TEXT,
                     database_summary TEXT
@@ -421,6 +428,7 @@ class AnalysisStore:
                 """
             )
             self._ensure_column(conn, "analyses", "parser_options_json", "TEXT")
+            self._ensure_column(conn, "analyses", "context_layers_json", "TEXT")
             self._ensure_column(conn, "scraped_pages", "discovery_depth", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "scraped_pages", "page_score", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "scraped_pages", "discovered_from_url", "TEXT")
@@ -702,6 +710,30 @@ class AnalysisStore:
             return ParserOptions.model_validate_json(value)
         except ValueError:
             return ParserOptions()
+
+    def _dump_context_layers(self, layers: list[WorkbookContextLayer]) -> str:
+        return json.dumps(
+            [layer.model_dump(mode="json") for layer in layers],
+            ensure_ascii=False,
+        )
+
+    def _load_context_layers(self, value: Optional[str]) -> list[WorkbookContextLayer]:
+        if not value:
+            return []
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(loaded, list):
+            return []
+
+        layers: list[WorkbookContextLayer] = []
+        for item in loaded:
+            try:
+                layers.append(WorkbookContextLayer.model_validate(item))
+            except ValueError:
+                continue
+        return layers
 
     def _ensure_column(
         self,

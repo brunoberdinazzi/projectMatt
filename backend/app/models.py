@@ -7,13 +7,21 @@ from pydantic import BaseModel, Field
 
 FonteType = Literal["site_orgao", "portal_transparencia", "esic", "nao_informada"]
 StatusType = Literal["Sim", "Nao", "Parcialmente", "Nao se aplica"]
+WorkbookLayerType = Literal[
+    "checklist_scope",
+    "reference_framework",
+    "entity_reference",
+    "registry_snapshot",
+    "outcome_matrix",
+]
 
 
 class ParserOptions(BaseModel):
     profile: str = "default"
     allowed_groups: list[str] = Field(default_factory=lambda: ["1", "5"])
     allowed_status: list[StatusType] = Field(default_factory=lambda: ["Nao", "Parcialmente"])
-    checklist_sheet_name: str = "Checklist"
+    checklist_sheet_name: str = "auto"
+    checklist_sheet_names: list[str] = Field(default_factory=list)
     metadata_row: int = Field(default=5, ge=1)
 
 
@@ -47,6 +55,15 @@ class ChecklistItem(BaseModel):
     aba_origem: Optional[str] = None
 
 
+class WorkbookContextLayer(BaseModel):
+    layer_type: WorkbookLayerType
+    sheet_name: str
+    title: str
+    summary: str
+    details: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
+
+
 class ChecklistParseResult(BaseModel):
     analysis_id: Optional[int] = None
     orgao: Optional[str] = None
@@ -69,6 +86,7 @@ class ChecklistParseResult(BaseModel):
     grupos_permitidos: list[str] = Field(default_factory=lambda: ["1", "5"])
     parser_options: ParserOptions = Field(default_factory=ParserOptions)
     itens_processados: list[ChecklistItem] = Field(default_factory=list)
+    context_layers: list[WorkbookContextLayer] = Field(default_factory=list)
     scraped_pages: list["ScrapedPageRecord"] = Field(default_factory=list)
     database_summary: Optional[str] = None
     warnings: list[str] = Field(default_factory=list)

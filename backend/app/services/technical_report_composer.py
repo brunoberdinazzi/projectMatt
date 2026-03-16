@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from ..models import ChecklistItem, ChecklistParseResult, ReportBuildRequest, ReportSection
+from ..models import ChecklistItem, ChecklistParseResult, ReportBuildRequest, ReportSection, WorkbookContextLayer
 from .report_metadata import build_report_title
 from .report_terms import SOURCE_ORDER, entity_display_name, source_label
 
@@ -187,7 +187,8 @@ class TechnicalReportComposer:
         return (
             f"Analise dos registros, informacoes e evidencias disponibilizados por {entity_name} "
             "nos canais e materiais considerados nesta avaliacao, com foco nos criterios definidos "
-            "pelo checklist e nos apontamentos consolidados pelo sistema."
+            "pelo checklist, nas camadas contextuais extraidas do workbook e nos apontamentos "
+            "consolidados pelo sistema."
         )
 
     def _build_team(self, parsed: ChecklistParseResult) -> str:
@@ -209,6 +210,9 @@ class TechnicalReportComposer:
                 "para contextualizacao, sem substituir os achados estruturados do checklist."
             ),
         ]
+        context_note = self._build_context_layers_note(parsed.context_layers)
+        if context_note:
+            paragraphs.append(context_note)
         if parsed.relatorio_contabil_referencia:
             paragraphs.append(
                 "Para complementar a leitura qualitativa dos dados e o preenchimento do checklist, "
@@ -260,6 +264,11 @@ class TechnicalReportComposer:
             "Destaca-se que esta analise se restringe aos criterios observados no checklist e aos "
             "registros efetivamente disponibilizados nos ambientes avaliados."
         )
+        if parsed.context_layers:
+            paragraphs.append(
+                "Tambem foram consideradas camadas complementares do workbook, utilizadas para "
+                "enquadramento contextual, identificacao da entidade e leitura de matrizes de referencia."
+            )
         return "\n\n".join(paragraphs)
 
     def _build_recommendations_intro(self, parsed: ChecklistParseResult) -> str:
@@ -509,6 +518,20 @@ class TechnicalReportComposer:
 
     def _status_scope_text(self, parsed: ChecklistParseResult) -> str:
         return ", ".join(parsed.parser_options.allowed_status)
+
+    def _build_context_layers_note(self, layers: list[WorkbookContextLayer]) -> str:
+        if not layers:
+            return ""
+
+        layer_titles = [layer.title for layer in layers[:4]]
+        summary = (
+            "Adicionalmente, a planilha foi tratada como fonte de contexto em camadas, contemplando "
+            + "; ".join(layer_titles)
+            + "."
+        )
+        if len(layers) > 4:
+            summary += f" Outras {len(layers) - 4} camada(s) complementar(es) tambem foram consideradas."
+        return summary
 
     def _roman_numeral(self, number: int) -> str:
         mapping = {

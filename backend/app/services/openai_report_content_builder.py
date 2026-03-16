@@ -110,6 +110,18 @@ class OpenAIReportContentBuilder:
                 }
             )
 
+        context_layers = [
+            {
+                "layer_type": layer.layer_type,
+                "sheet_name": layer.sheet_name,
+                "title": layer.title,
+                "summary": layer.summary,
+                "details": layer.details,
+                "references": layer.references,
+            }
+            for layer in payload.context_layers
+        ]
+
         instructions = {
             "tarefa": "Gerar as secoes variaveis de um relatorio tecnico analitico a partir de checklist estruturado e evidencias complementares.",
             "regras": [
@@ -119,6 +131,7 @@ class OpenAIReportContentBuilder:
                 "Adote tom tecnico profissional, claro e nao promocional.",
                 "Nao presuma setor, esfera institucional ou marco regulatorio alem do que estiver explicitamente descrito nos dados.",
                 "Considere o contexto recuperado do banco e do scraper apenas como apoio para contextualizacao; os achados do checklist continuam sendo a fonte principal das conclusoes.",
+                "Use as camadas complementares do workbook como evidencias estruturadas de enquadramento, sem trata-las como prova conclusiva isolada.",
                 "Nas secoes de resultados, utilize formulacoes como 'Constatou-se', 'Verificou-se', 'Cabe destacar' e 'Por fim', quando couber.",
                 "Nas secoes de recomendacoes, primeiro contextualize brevemente a irregularidade e depois apresente a providencia com formulacao impessoal e objetiva.",
                 "Na secao de quesito, responda de forma sintese se ha necessidade de recomendacoes tecnicas e consolide os pontos por fonte.",
@@ -157,6 +170,7 @@ class OpenAIReportContentBuilder:
                 "grupos_permitidos": payload.grupos_permitidos,
                 "parser_options": payload.parser_options.model_dump(mode="json"),
                 "database_summary": payload.database_summary,
+                "context_layers": context_layers,
                 "scraped_pages": scraped_pages,
                 "warnings": payload.warnings,
                 "achados": achados,

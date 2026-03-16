@@ -18,6 +18,7 @@ from ..models import (
     ParserProfileDefinition,
     StatusType,
 )
+from .workbook_context_extractor import WorkbookContextExtractor
 
 STATUS_MAP = {
     "sim": "Sim",
@@ -34,6 +35,7 @@ RESPONSE_HEADER_RE = re.compile(r"resposta\s*\[(\d{4})\]", re.IGNORECASE)
 DETAIL_COLUMN_PAIRS = (("D", "E"), ("G", "H"), ("J", "K"), ("M", "N"), ("P", "Q"))
 DEFAULT_ALLOWED_GROUPS = ("1", "5")
 DEFAULT_ALLOWED_STATUS = ("Nao", "Parcialmente")
+AUTO_SHEET_SELECTIONS = {"", "*", "auto", "all", "todas", "todas_as_abas", "multi_aba"}
 PARSER_PROFILE_MAP = {
     "default": ParserProfileDefinition(
         key="default",
@@ -64,13 +66,14 @@ class ParserConfig:
     profile: str = "default"
     allowed_groups: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_GROUPS))
     allowed_status: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_STATUS))
-    checklist_sheet_name: str = "Checklist"
+    checklist_sheet_name: str = "auto"
     metadata_row: int = 5
 
 
 class ChecklistParser:
     def __init__(self, config: ParserConfig) -> None:
         self.config = config
+        self.context_extractor = WorkbookContextExtractor()
 
     def parse(self, workbook_path: Path, source_name: Optional[str] = None) -> ChecklistParseResult:
         result = ChecklistParseResult(
@@ -84,56 +87,155 @@ class ChecklistParser:
             ),
         )
         workbook = load_workbook(workbook_path, read_only=True, data_only=True)
-        sheet = self._resolve_checklist_sheet(workbook)
-        if sheet is None:
-            result.warnings.append("Aba 'Checklist' nao encontrada.")
-            return result
+        try:
+            sheets, missing_sheet_names = self._resolve_checklist_sheets(workbook)
+            if not sheets:
+                if missing_sheet_names:
+                    result.warnings.append(
+                        "Abas solicitadas nao encontradas: " + ", ".join(missing_sheet_names) + "."
+                    )
+                result.warnings.append("Nenhuma aba de checklist compativel foi encontrada.")
+                return result
+            result.parser_options.checklist_sheet_names = [sheet.title for sheet in sheets]
 
-        filename_hint = Path(source_name) if source_name else workbook_path
-        result.orgao = _clean_value(sheet["E3"].value) or self._infer_orgao_from_filename(filename_hint)
-        result.tipo_orgao = self._infer_tipo_orgao(filename_hint)
-        result.sat_numero = self._infer_sat_numero(filename_hint)
-        result.site_url = self._find_first_url_for_items(sheet, ["1.1"])
-        result.portal_url = self._find_first_url_for_items(sheet, ["1.2"])
-        result.esic_url = self._find_first_url_for_items(sheet, ["5.1", "5.2", "5.4", "5.5", "5.6", "5.7", "5.8"])
+            filename_hint = Path(source_name) if source_name else workbook_path
+            result.orgao = self._infer_orgao_from_filename(filename_hint)
+            result.tipo_orgao = self._infer_tipo_orgao(filename_hint)
+            result.sat_numero = self._infer_sat_numero(filename_hint)
+            allowed_group_statuses: list[tuple[str, Optional[str]]] = []
+            all_observations: list[tuple[str, str]] = []
+
+            for sheet in sheets:
+                self._merge_sheet_metadata(result, sheet)
+                response_columns = self._detect_response_columns(sheet)
+                self._merge_unique_values(
+                    result.fontes_disponiveis,
+                    self._detect_available_sources(sheet, response_columns),
+                )
+                observation_start_row = self._find_observation_start_row(sheet)
+                observations = self._parse_observations(sheet, observation_start_row)
+                all_observations.extend(observations)
+                allowed_group_statuses.extend(
+                    self._collect_allowed_group_statuses(sheet, response_columns, observation_start_row)
+                )
+                result.itens_processados.extend(
+                    self._parse_items(
+                        sheet=sheet,
+                        response_columns=response_columns,
+                        observation_start_row=observation_start_row,
+                        observations=observations,
+                        warnings=result.warnings,
+                    )
+                )
+
+            if missing_sheet_names:
+                result.warnings.append(
+                    "Abas solicitadas nao encontradas: " + ", ".join(missing_sheet_names) + "."
+                )
+
+            result.context_layers = self.context_extractor.extract(workbook, result)
+
+            if not result.itens_processados:
+                result.warnings.append("Nenhum item elegivel encontrado nas abas selecionadas.")
+                self._append_empty_scope_warnings(
+                    warnings=result.warnings,
+                    observations=all_observations,
+                    allowed_group_statuses=allowed_group_statuses,
+                )
+
+            return result
+        finally:
+            workbook.close()
+
+    def _resolve_checklist_sheets(self, workbook) -> tuple[list, list[str]]:
+        if _is_auto_sheet_selection(self.config.checklist_sheet_name):
+            return self._discover_candidate_sheets(workbook), []
+        requested_names = _parse_sheet_names(self.config.checklist_sheet_name)
+        return self._resolve_named_sheets(workbook, requested_names)
+
+    def _resolve_named_sheets(self, workbook, requested_names: list[str]) -> tuple[list, list[str]]:
+        selected = []
+        selected_normalized: set[str] = set()
+        missing: list[str] = []
+
+        for requested_name in requested_names:
+            sheet = self._find_sheet_by_name(workbook, requested_name)
+            if sheet is None:
+                missing.append(requested_name)
+                continue
+            normalized_title = _normalize_text(sheet.title)
+            if normalized_title in selected_normalized:
+                continue
+            selected.append(sheet)
+            selected_normalized.add(normalized_title)
+
+        return selected, missing
+
+    def _discover_candidate_sheets(self, workbook) -> list:
+        selected = []
+        for sheet in workbook.worksheets:
+            if self._looks_like_checklist_sheet(sheet):
+                selected.append(sheet)
+        return selected
+
+    def _find_sheet_by_name(self, workbook, requested_name: str):
+        if requested_name in workbook.sheetnames:
+            return workbook[requested_name]
+
+        requested_normalized = _normalize_text(requested_name)
+        for sheet_name in workbook.sheetnames:
+            if _normalize_text(sheet_name) == requested_normalized:
+                return workbook[sheet_name]
+        return None
+
+    def _looks_like_checklist_sheet(self, sheet) -> bool:
+        normalized_title = _normalize_text(sheet.title)
+        if "checklist" in normalized_title:
+            return True
+        if (sheet.max_row or 0) < self.config.metadata_row:
+            return False
 
         response_columns = self._detect_response_columns(sheet)
-        result.fontes_disponiveis = self._detect_available_sources(sheet, response_columns)
-        observation_start_row = self._find_observation_start_row(sheet)
-        observations = self._parse_observations(sheet, observation_start_row)
-        allowed_group_statuses = self._collect_allowed_group_statuses(sheet, response_columns, observation_start_row)
+        if not response_columns:
+            return False
 
-        result.itens_processados = self._parse_items(
-            sheet=sheet,
-            response_columns=response_columns,
-            observation_start_row=observation_start_row,
-            observations=observations,
-            warnings=result.warnings,
-        )
+        item_header = _normalize_text(sheet[f"B{self.config.metadata_row}"].value)
+        description_header = _normalize_text(sheet[f"C{self.config.metadata_row}"].value)
+        if item_header in {"item", "codigo", "item_codigo"} and description_header in {
+            "descricao",
+            "descricao_item",
+            "descricao_do_item",
+        }:
+            return True
 
-        if not result.itens_processados:
-            result.warnings.append("Nenhum item elegivel encontrado na aba 'Checklist'.")
-            self._append_empty_scope_warnings(
-                warnings=result.warnings,
-                observations=observations,
-                allowed_group_statuses=allowed_group_statuses,
+        return self._find_observation_start_row(sheet) <= (sheet.max_row or 0)
+
+    def _merge_sheet_metadata(self, result: ChecklistParseResult, sheet) -> None:
+        if not result.orgao:
+            result.orgao = _clean_value(sheet["E3"].value) or result.orgao
+        if not result.site_url:
+            result.site_url = self._find_first_url_for_items(sheet, ["1.1"])
+        if not result.portal_url:
+            result.portal_url = self._find_first_url_for_items(sheet, ["1.2"])
+        if not result.esic_url:
+            result.esic_url = self._find_first_url_for_items(
+                sheet,
+                ["5.1", "5.2", "5.4", "5.5", "5.6", "5.7", "5.8"],
             )
 
-        return result
-
-    def _resolve_checklist_sheet(self, workbook):
-        if self.config.checklist_sheet_name in workbook.sheetnames:
-            return workbook[self.config.checklist_sheet_name]
-
-        for sheet_name in workbook.sheetnames:
-            if _normalize_text(sheet_name) == "checklist":
-                return workbook[sheet_name]
-
-        return None
+    def _merge_unique_values(self, current_values: list[str], new_values: list[str]) -> None:
+        for value in new_values:
+            if value not in current_values:
+                current_values.append(value)
 
     def _detect_response_columns(self, sheet) -> list[tuple[str, str]]:
         response_columns: list[tuple[str, str]] = []
-        for cell in sheet[self.config.metadata_row]:
+        if (sheet.max_row or 0) < self.config.metadata_row:
+            return response_columns
+
+        row_iter = sheet.iter_rows(min_row=self.config.metadata_row, max_row=self.config.metadata_row)
+        metadata_cells = next(row_iter, [])
+        for cell in metadata_cells:
             value = _clean_value(cell.value)
             if not value:
                 continue
@@ -370,7 +472,7 @@ class ChecklistParser:
         stem = workbook_path.stem
         for marker in ("Prefeitura", "Câmara", "Camara"):
             if marker.lower() in stem.lower():
-                return stem.split(marker, 1)[-1].strip(" -")
+                return stem.split(marker, 1)[-1].strip(" -_")
         return None
 
     def _infer_tipo_orgao(self, workbook_path: Path) -> Optional[str]:
@@ -526,12 +628,13 @@ def build_parser_config(
 
     status_values = _parse_csv_values(allowed_status_text) or profile_definition.allowed_status
     normalized_statuses = _normalize_allowed_statuses(status_values) or profile_definition.allowed_status
+    normalized_sheet_selection = _normalize_sheet_selection_request(checklist_sheet_name)
 
     return ParserConfig(
         profile=profile_definition.key,
         allowed_groups=set(normalized_groups or DEFAULT_ALLOWED_GROUPS),
         allowed_status=set(normalized_statuses or DEFAULT_ALLOWED_STATUS),
-        checklist_sheet_name=(checklist_sheet_name or "Checklist").strip() or "Checklist",
+        checklist_sheet_name=normalized_sheet_selection,
         metadata_row=max(1, int(metadata_row or 5)),
     )
 
@@ -540,6 +643,24 @@ def _parse_csv_values(value: Optional[str]) -> list[str]:
     if not value:
         return []
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _parse_sheet_names(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in re.split(r"[,;\n]+", value) if part.strip()]
+
+
+def _normalize_sheet_selection_request(value: Optional[str]) -> str:
+    sheet_names = _parse_sheet_names(value)
+    if not sheet_names or _is_auto_sheet_selection(value):
+        return "auto"
+    return ", ".join(sheet_names)
+
+
+def _is_auto_sheet_selection(value: Optional[str]) -> bool:
+    normalized = _normalize_text(value)
+    return normalized in AUTO_SHEET_SELECTIONS
 
 
 def _normalize_allowed_statuses(values: list[str]) -> list[StatusType]:

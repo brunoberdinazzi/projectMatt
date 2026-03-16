@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from ..models import ChecklistItem, ChecklistParseResult, ScrapedLink, ScrapedPageRecord
+from ..models import ChecklistItem, ChecklistParseResult, ScrapedLink, ScrapedPageRecord, WorkbookContextLayer
 from .report_terms import entity_display_name, source_label
 
 
@@ -11,6 +11,7 @@ class AnalysisContextBuilder:
         parts = [
             self._build_header(parsed),
             self._build_items_block(parsed.itens_processados),
+            self._build_context_layers_block(parsed.context_layers),
             self._build_scraping_block(parsed.scraped_pages),
         ]
 
@@ -33,6 +34,12 @@ class AnalysisContextBuilder:
                 f"status {', '.join(parsed.parser_options.allowed_status)}."
             ),
         ]
+        if parsed.parser_options.checklist_sheet_names:
+            lines.append(
+                "Abas consolidadas: "
+                + ", ".join(parsed.parser_options.checklist_sheet_names)
+                + "."
+            )
         source_lines = []
         if parsed.site_url:
             source_lines.append(f"{source_label('site_orgao')}: {parsed.site_url}")
@@ -83,6 +90,20 @@ class AnalysisContextBuilder:
             if notable_links:
                 line += " Evidencias priorizadas: " + " | ".join(notable_links) + "."
             lines.append(line)
+        return "\n".join(lines)
+
+    def _build_context_layers_block(self, layers: list[WorkbookContextLayer]) -> str:
+        if not layers:
+            return "Camadas complementares do workbook: nenhuma camada estruturada foi extraida nesta analise."
+
+        lines = ["Camadas complementares do workbook:"]
+        for layer in layers[:8]:
+            chunk = f"- {layer.title} [{layer.sheet_name}]: {self._normalize_text(layer.summary, 220)}"
+            if layer.details:
+                chunk += " Evidencias-chave: " + " | ".join(
+                    self._normalize_text(detail, 100) for detail in layer.details[:3]
+                ) + "."
+            lines.append(chunk)
         return "\n".join(lines)
 
     def _build_warning_block(self, warnings: list[str]) -> str:

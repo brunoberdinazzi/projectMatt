@@ -137,6 +137,18 @@ class OllamaReportContentBuilder:
                 }
             )
 
+        context_layers = [
+            {
+                "layer_type": layer.layer_type,
+                "sheet_name": layer.sheet_name,
+                "title": layer.title,
+                "summary": layer.summary,
+                "details": layer.details,
+                "references": layer.references,
+            }
+            for layer in payload.context_layers
+        ]
+
         sections = [
             *[
                 {"fonte": source_key, "titulo": source_section_title("Resultados Obtidos", source_key)}
@@ -158,6 +170,7 @@ class OllamaReportContentBuilder:
             "periodo_analise": payload.periodo_analise,
             "parser_options": payload.parser_options.model_dump(mode="json"),
             "database_summary": payload.database_summary,
+            "context_layers": context_layers,
             "scraped_pages": scraped_pages,
             "warnings": payload.warnings,
             "achados": achados,
@@ -171,6 +184,7 @@ class OllamaReportContentBuilder:
                 "Use exclusivamente os dados fornecidos. Nao invente fatos.",
                 "Nao presuma setor, esfera institucional ou marco regulatorio alem do que estiver explicitamente descrito nos dados.",
                 "Considere o contexto recuperado do banco e do scraper apenas para contextualizacao complementar.",
+                "Use as camadas complementares do workbook como evidencias estruturadas de enquadramento, sem trata-las como prova conclusiva isolada.",
                 "Nas secoes de resultados, prefira formulacoes como 'Constatou-se', 'Verificou-se', 'Cabe destacar' e 'Por fim', quando cabiveis.",
                 "Nas secoes de recomendacoes, contextualize a irregularidade e apresente a providencia de forma objetiva.",
                 "Na secao de quesito, sintetize a necessidade de recomendacoes tecnicas por fonte.",
