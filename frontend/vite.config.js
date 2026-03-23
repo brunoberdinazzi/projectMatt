@@ -7,12 +7,22 @@ export default defineConfig({
     outDir: "dist",
     assetsDir: "static",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom"],
+          motion: ["framer-motion"],
+          icons: ["lucide-react"],
+        },
+      },
+    },
   },
   server: {
     host: "127.0.0.1",
     port: 5173,
     proxy: {
       "/health": "http://127.0.0.1:8000",
+      "/auth": "http://127.0.0.1:8000",
       "/parser": "http://127.0.0.1:8000",
       "/providers": "http://127.0.0.1:8000",
       "/analysis": "http://127.0.0.1:8000",

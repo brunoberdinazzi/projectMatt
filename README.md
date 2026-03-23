@@ -2,8 +2,8 @@
 
 AI-assisted pipeline for turning structured spreadsheets into technical reports.
 
-The project reads a workbook, extracts the relevant checklist items, stores the intake in SQLite,
-enriches the analysis with link scraping, builds a compact context for an AI model, and returns a
+The project reads a workbook, extracts the relevant checklist items, stores the intake in a local
+SQLite database or PostgreSQL, enriches the analysis with link scraping, builds a compact context for an AI model, and returns a
 report in `DOCX` or `PDF`.
 
 ## Why this project exists
@@ -29,7 +29,7 @@ Draux Inc. automates that middle layer:
 - Remote AI generation with OpenAI-compatible APIs.
 - Link scraping with contextual classification.
 - Link scraping with evidence scoring, matched terms, prioritized links and controlled-depth crawling.
-- SQLite persistence for analyses, extracted items, scraped pages and summaries.
+- PostgreSQL-ready persistence for analyses, extracted items, scraped pages and summaries.
 - `DOCX` generation with template preservation.
 - `PDF` export for lightweight sharing.
 
@@ -42,7 +42,7 @@ FastAPI
   ->
 Workbook parser
   ->
-Analysis store (SQLite)
+Analysis store (SQLite or PostgreSQL)
   ->
 Link scraper
   ->
@@ -97,7 +97,7 @@ The user uploads:
 
 ### 2. Persistence
 
-The backend creates an analysis record in SQLite and stores:
+The backend creates an analysis record in the configured database and stores:
 
 - input metadata;
 - extracted items;
@@ -212,11 +212,60 @@ pkill -f "uvicorn backend.app.main:app" || true
 
 ## Database
 
-Analyses are stored in:
+By default, analyses are stored in:
 
 ```text
 backend/data/matt.db
 ```
+
+To use PostgreSQL instead, configure:
+
+```bash
+export DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME"
+```
+
+The canonical financial warehouse can share the same database or use a dedicated one:
+
+```bash
+export FINANCE_DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME"
+```
+
+If `FINANCE_DATABASE_URL` is omitted, the app falls back to `DATABASE_URL`.
+
+### Migrating SQLite to PostgreSQL
+
+The repository now includes a migrator for:
+
+- auth users and sessions;
+- analyses and extracted structures;
+- scrape history;
+- generation history;
+- financial warehouse snapshots.
+
+Example:
+
+```bash
+./.venv/bin/python scripts/migrate_sqlite_to_postgres.py \
+  --source-app-db backend/data/matt.db \
+  --source-finance-db backend/data/draux_finance.db \
+  --database-url "postgresql://USER:PASSWORD@HOST:5432/DBNAME" \
+  --truncate-existing
+```
+
+### Financial analytical views
+
+The canonical warehouse now exposes SQL views for direct querying:
+
+- `finance_client_revenue_view`
+- `finance_contract_revenue_view`
+- `finance_period_result_view`
+
+These views are useful for:
+
+- top clients by revenue in the selected analysis;
+- top contracts by accumulated yield;
+- best and worst periods by net result;
+- dashboards and deterministic report sections without relying on AI for the numbers.
 
 The database currently keeps:
 
@@ -316,12 +365,14 @@ authoritative labels.
 Example setup:
 
 ```bash
-ollama pull qwen2.5:7b
-export OLLAMA_MODEL="qwen2.5:7b"
+ollama pull deepseek-r1:8b
+export OLLAMA_MODEL="deepseek-r1:8b"
 export OLLAMA_TIMEOUT_SECONDS="600"
 ```
 
 The backend uses `http://127.0.0.1:11434` by default.
+When `OLLAMA_MODEL` is not set, the backend now prefers `deepseek-r1:8b` automatically if it is installed.
+The UI also consumes `/providers/ollama/status` to show latency, loaded model and local availability before generation.
 
 ### Remote generation with OpenAI-compatible APIs
 

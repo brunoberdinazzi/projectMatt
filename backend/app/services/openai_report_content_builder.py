@@ -63,6 +63,9 @@ class OpenAIReportContentBuilder:
         )
 
     def _build_prompt(self, payload: ChecklistParseResult) -> str:
+        if payload.financial_analysis is not None:
+            return self._build_financial_prompt(payload)
+
         entity_name = entity_display_name(payload.orgao, payload.tipo_orgao)
         achados = []
         for item in payload.itens_processados:
@@ -174,6 +177,72 @@ class OpenAIReportContentBuilder:
                 "scraped_pages": scraped_pages,
                 "warnings": payload.warnings,
                 "achados": achados,
+            },
+        }
+        return json.dumps(instructions, ensure_ascii=False, indent=2)
+
+    def _build_financial_prompt(self, payload: ChecklistParseResult) -> str:
+        analysis = payload.financial_analysis
+        if analysis is None:
+            raise RuntimeError("Analise financeira nao encontrada para montagem do prompt.")
+
+        context_layers = [
+            {
+                "layer_type": layer.layer_type,
+                "sheet_name": layer.sheet_name,
+                "title": layer.title,
+                "summary": layer.summary,
+                "details": layer.details,
+                "references": layer.references,
+            }
+            for layer in payload.context_layers
+        ]
+        instructions = {
+            "tarefa": "Gerar um relatorio financeiro gerencial em portugues com base na DRE consolidada, nos fechamentos mensais e nos agrupamentos por cliente e contrato.",
+            "regras": [
+                "Use exclusivamente os dados fornecidos.",
+                "Nao invente contratos, clientes, recebimentos, custos, despesas ou conclusoes nao amparadas no material.",
+                "Escreva em portugues formal, tecnica, objetiva e impessoal.",
+                "Mostre explicitamente o rendimento acumulado de cada cliente no recorte, a distribuicao por periodo quando houver dados e o rendimento total acumulado de cada contrato relevante.",
+                "Se houver pendencias, diferencie claramente valor recebido, valor previsto e saldo pendente.",
+                "Nao presuma regime contabil, enquadramento fiscal ou classificacao externa nao informada.",
+                "Retorne somente JSON valido, sem markdown e sem texto fora do JSON.",
+            ],
+            "json_esperado": {
+                "titulo_relatorio": "string",
+                "secoes": [
+                    {
+                        "fonte": "nao_informada",
+                        "titulo": "string",
+                        "texto": "string",
+                    }
+                ],
+            },
+            "secoes_obrigatorias": [
+                {"fonte": "nao_informada", "titulo": "VISAO EXECUTIVA"},
+                {"fonte": "nao_informada", "titulo": "DRE CONSOLIDADA"},
+                {"fonte": "nao_informada", "titulo": "RECEBIMENTOS POR CLIENTE"},
+                {"fonte": "nao_informada", "titulo": "RECEBIMENTOS POR CONTRATO"},
+                {"fonte": "nao_informada", "titulo": "RESULTADO POR PERIODO"},
+                {"fonte": "nao_informada", "titulo": "CUSTOS E DESPESAS RELEVANTES"},
+                {"fonte": "nao_informada", "titulo": "OBSERVACOES OPERACIONAIS"},
+            ],
+            "contexto": {
+                "analysis_id": payload.analysis_id,
+                "entidade_analisada": entity_display_name(payload.orgao, payload.tipo_orgao),
+                "periodo_analise": payload.periodo_analise,
+                "database_summary": payload.database_summary,
+                "arquivos_fonte": analysis.source_workbook_names,
+                "dre_lines": [line.model_dump(mode="json") for line in analysis.dre_lines],
+                "months": [month.model_dump(mode="json") for month in analysis.months],
+                "client_rollups": [client.model_dump(mode="json") for client in analysis.client_rollups[:20]],
+                "client_period_rollups": [
+                    client_period.model_dump(mode="json") for client_period in analysis.client_period_rollups[:60]
+                ],
+                "contract_rollups": [contract.model_dump(mode="json") for contract in analysis.contract_rollups[:30]],
+                "summary_notes": analysis.summary_notes,
+                "warnings": payload.warnings,
+                "context_layers": context_layers,
             },
         }
         return json.dumps(instructions, ensure_ascii=False, indent=2)

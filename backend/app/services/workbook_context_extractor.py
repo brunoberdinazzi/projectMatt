@@ -174,7 +174,7 @@ class WorkbookContextExtractor:
             if site_url:
                 details.append(f"Sitio eletronico: {site_url}")
             if portal_url:
-                details.append(f"Portal da transparencia: {portal_url}")
+                details.append(f"Canal complementar: {portal_url}")
             return WorkbookContextLayer(
                 layer_type="registry_snapshot",
                 sheet_name=sheet.title,

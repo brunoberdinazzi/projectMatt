@@ -13,7 +13,33 @@ WorkbookLayerType = Literal[
     "entity_reference",
     "registry_snapshot",
     "outcome_matrix",
+    "financial_overview",
+    "financial_cost_structure",
+    "financial_results_bridge",
+    "financial_client_rollup",
+    "financial_contract_rollup",
 ]
+ReferenceLinkKind = Literal["primary", "reference"]
+FinancialEntryType = Literal[
+    "receivable",
+    "other_income",
+    "permuta",
+    "debt",
+    "bank_fee",
+    "internal_transfer",
+    "tax",
+    "personnel",
+    "fixed_cost",
+    "operating_cost",
+    "inventory",
+    "negotiation",
+    "partnership",
+    "summary",
+]
+FinancialStatementLineType = Literal["revenue", "deduction", "expense", "result", "balance", "note"]
+FinancialSourceKind = Literal["workbook", "bank_statement"]
+FinancialReconciliationStatus = Literal["matched", "probable", "unmatched", "excluded"]
+FinancialAliasKind = Literal["client", "contract"]
 
 
 class ParserOptions(BaseModel):
@@ -31,6 +57,77 @@ class ParserProfileDefinition(BaseModel):
     description: str
     allowed_groups: list[str] = Field(default_factory=list)
     allowed_status: list[StatusType] = Field(default_factory=list)
+
+
+class ParserDetectionResponse(BaseModel):
+    requested_profile: str
+    resolved_profile: str
+    resolved_label: str
+    resolved_description: Optional[str] = None
+    message: Optional[str] = None
+
+
+class OllamaModelsResponse(BaseModel):
+    models: list[str] = Field(default_factory=list)
+    recommended_model: Optional[str] = None
+
+
+class OllamaLoadedModelResponse(BaseModel):
+    name: str
+    size_vram: Optional[int] = None
+    context_length: Optional[int] = None
+    expires_at: Optional[str] = None
+
+
+class OllamaStatusResponse(BaseModel):
+    available: bool = False
+    latency_ms: Optional[int] = None
+    base_url: Optional[str] = None
+    recommended_model: Optional[str] = None
+    active_model: Optional[str] = None
+    installed_model_count: int = 0
+    loaded_model_count: int = 0
+    loaded_models: list[OllamaLoadedModelResponse] = Field(default_factory=list)
+    message: Optional[str] = None
+
+
+class AuthRegisterRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+
+
+class AuthLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthProfileUpdateRequest(BaseModel):
+    full_name: str
+    email: str
+
+
+class AuthPasswordUpdateRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AuthUserResponse(BaseModel):
+    id: int
+    full_name: str
+    email: str
+    created_at: Optional[str] = None
+
+
+class AuthSessionInfo(BaseModel):
+    session_id: str
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+
+
+class AuthSessionResponse(BaseModel):
+    user: AuthUserResponse
+    session: Optional[AuthSessionInfo] = None
 
 
 class ChecklistDetail(BaseModel):
@@ -64,6 +161,166 @@ class WorkbookContextLayer(BaseModel):
     references: list[str] = Field(default_factory=list)
 
 
+class WorkbookReferenceLink(BaseModel):
+    url: str
+    sheet_name: str
+    cell_reference: Optional[str] = None
+    label: Optional[str] = None
+    context: Optional[str] = None
+    source_hint: FonteType = "nao_informada"
+    link_kind: ReferenceLinkKind = "reference"
+    crawlable: bool = True
+    selected_for_crawl: bool = False
+
+
+class FinancialEntry(BaseModel):
+    entry_type: FinancialEntryType
+    sheet_name: str
+    description: str
+    source_kind: Optional[FinancialSourceKind] = None
+    amount: Optional[float] = None
+    status: Optional[str] = None
+    date: Optional[str] = None
+    due_date: Optional[str] = None
+    counterparty: Optional[str] = None
+    unit: Optional[str] = None
+    notes: Optional[str] = None
+    owner_label: Optional[str] = None
+    contract_label: Optional[str] = None
+    contract_start_date: Optional[str] = None
+    contract_end_date: Optional[str] = None
+    reconciliation_status: Optional[FinancialReconciliationStatus] = None
+    reconciliation_score: Optional[float] = None
+    reconciliation_partner_period_label: Optional[str] = None
+    reconciliation_partner_description: Optional[str] = None
+    reconciliation_alias_label: Optional[str] = None
+    reconciliation_note: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class FinancialSectionSnapshot(BaseModel):
+    section_key: str
+    title: str
+    owner_label: Optional[str] = None
+    total_amount: Optional[float] = None
+    entry_count: int = 0
+    entries: list[FinancialEntry] = Field(default_factory=list)
+
+
+class FinancialPeriodSummary(BaseModel):
+    sheet_name: str
+    period_label: str
+    year: Optional[int] = None
+    gross_revenue_total: Optional[float] = None
+    receivables_total: Optional[float] = None
+    other_income_total: Optional[float] = None
+    permuta_balance: Optional[float] = None
+    debt_outstanding: Optional[float] = None
+    taxes_total: Optional[float] = None
+    personnel_total: Optional[float] = None
+    fixed_costs_total: Optional[float] = None
+    operating_costs_total: Optional[float] = None
+    vbc_total: Optional[float] = None
+    modulo_total: Optional[float] = None
+    global_expenses_total: Optional[float] = None
+    net_result: Optional[float] = None
+    carried_balance: Optional[float] = None
+    closing_total: Optional[float] = None
+    pending_entry_count: int = 0
+    sections: list[FinancialSectionSnapshot] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class FinancialStatementLine(BaseModel):
+    key: str
+    label: str
+    amount: float = 0.0
+    line_type: FinancialStatementLineType = "note"
+    share_of_gross_revenue: Optional[float] = None
+    share_of_operating_inflows: Optional[float] = None
+
+
+class FinancialClientRollup(BaseModel):
+    canonical_client_id: Optional[int] = None
+    canonical_client_name: Optional[str] = None
+    client_name: str
+    total_received_amount: float = 0.0
+    total_expected_amount: float = 0.0
+    total_pending_amount: float = 0.0
+    contract_count: int = 0
+    months_covered: list[str] = Field(default_factory=list)
+    contract_labels: list[str] = Field(default_factory=list)
+    reconciliation_matched_count: int = 0
+    reconciliation_probable_count: int = 0
+    reconciliation_unmatched_count: int = 0
+    reconciliation_excluded_count: int = 0
+    reconciliation_matched_amount: float = 0.0
+    reconciliation_probable_amount: float = 0.0
+    reconciliation_unmatched_amount: float = 0.0
+    reconciliation_excluded_amount: float = 0.0
+    reconciliation_alias_supported_count: int = 0
+    reconciliation_alias_supported_amount: float = 0.0
+    reconciliation_coverage_ratio: Optional[float] = None
+
+
+class FinancialClientPeriodRollup(BaseModel):
+    canonical_client_id: Optional[int] = None
+    canonical_client_name: Optional[str] = None
+    client_name: str
+    period_label: str
+    total_received_amount: float = 0.0
+    total_expected_amount: float = 0.0
+    total_pending_amount: float = 0.0
+    contract_count: int = 0
+    contract_labels: list[str] = Field(default_factory=list)
+
+
+class FinancialContractRollup(BaseModel):
+    canonical_client_id: Optional[int] = None
+    canonical_client_name: Optional[str] = None
+    canonical_contract_id: Optional[int] = None
+    canonical_contract_name: Optional[str] = None
+    contract_label: str
+    client_name: Optional[str] = None
+    unit: Optional[str] = None
+    contract_start_date: Optional[str] = None
+    contract_end_date: Optional[str] = None
+    latest_status: Optional[str] = None
+    total_received_amount: float = 0.0
+    total_expected_amount: float = 0.0
+    total_pending_amount: float = 0.0
+    entry_count: int = 0
+    months_covered: list[str] = Field(default_factory=list)
+    source_sheet_names: list[str] = Field(default_factory=list)
+    reconciliation_matched_count: int = 0
+    reconciliation_probable_count: int = 0
+    reconciliation_unmatched_count: int = 0
+    reconciliation_excluded_count: int = 0
+    reconciliation_matched_amount: float = 0.0
+    reconciliation_probable_amount: float = 0.0
+    reconciliation_unmatched_amount: float = 0.0
+    reconciliation_excluded_amount: float = 0.0
+    reconciliation_alias_supported_count: int = 0
+    reconciliation_alias_supported_amount: float = 0.0
+    reconciliation_coverage_ratio: Optional[float] = None
+
+
+class FinancialAnalysisResult(BaseModel):
+    workbook_kind: str = "financial_dre"
+    fiscal_year: Optional[int] = None
+    entity_name: Optional[str] = None
+    source_workbook_count: int = 1
+    source_workbook_names: list[str] = Field(default_factory=list)
+    months: list[FinancialPeriodSummary] = Field(default_factory=list)
+    dre_lines: list[FinancialStatementLine] = Field(default_factory=list)
+    client_rollups: list[FinancialClientRollup] = Field(default_factory=list)
+    client_period_rollups: list[FinancialClientPeriodRollup] = Field(default_factory=list)
+    contract_rollups: list[FinancialContractRollup] = Field(default_factory=list)
+    summary_notes: list[str] = Field(default_factory=list)
+    detected_entities: list[str] = Field(default_factory=list)
+    entry_count: int = 0
+
+
 class ChecklistParseResult(BaseModel):
     analysis_id: Optional[int] = None
     orgao: Optional[str] = None
@@ -87,6 +344,11 @@ class ChecklistParseResult(BaseModel):
     parser_options: ParserOptions = Field(default_factory=ParserOptions)
     itens_processados: list[ChecklistItem] = Field(default_factory=list)
     context_layers: list[WorkbookContextLayer] = Field(default_factory=list)
+    reference_links: list[WorkbookReferenceLink] = Field(default_factory=list)
+    financial_analysis: Optional[FinancialAnalysisResult] = None
+    parse_cache_hit: bool = False
+    parse_duration_ms: Optional[int] = None
+    parse_cache_saved_ms: Optional[int] = None
     scraped_pages: list["ScrapedPageRecord"] = Field(default_factory=list)
     database_summary: Optional[str] = None
     warnings: list[str] = Field(default_factory=list)
@@ -144,9 +406,90 @@ class StoredAnalysisResponse(BaseModel):
     parsed: ChecklistParseResult
 
 
+class AnalysisListItem(BaseModel):
+    analysis_id: int
+    created_at: Optional[str] = None
+    source_filename: Optional[str] = None
+    orgao: Optional[str] = None
+    tipo_orgao: Optional[str] = None
+    periodo_analise: Optional[str] = None
+    parser_profile: Optional[str] = None
+    checklist_sheet_names: list[str] = Field(default_factory=list)
+    extracted_item_count: int = 0
+    scraped_page_count: int = 0
+    generation_count: int = 0
+    last_generation_at: Optional[str] = None
+
+
 class AnalysisContextResponse(BaseModel):
     analysis_id: int
     summary: str
+
+
+class FinancialAliasItem(BaseModel):
+    kind: FinancialAliasKind
+    entity_id: int
+    canonical_name: str
+    aliases: list[str] = Field(default_factory=list)
+    canonical_client_id: Optional[int] = None
+    canonical_client_name: Optional[str] = None
+    unit: Optional[str] = None
+    contract_start_date: Optional[str] = None
+    contract_end_date: Optional[str] = None
+    first_period_label: Optional[str] = None
+    last_period_label: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class FinancialAliasCatalogResponse(BaseModel):
+    clients: list[FinancialAliasItem] = Field(default_factory=list)
+    contracts: list[FinancialAliasItem] = Field(default_factory=list)
+
+
+class FinancialAliasUpsertRequest(BaseModel):
+    kind: FinancialAliasKind
+    entity_id: int = Field(..., ge=1)
+    alias: str
+
+
+class FinancialAliasDeleteRequest(BaseModel):
+    kind: FinancialAliasKind
+    entity_id: int = Field(..., ge=1)
+    alias: str
+
+
+class FinancialEntryTraceItem(BaseModel):
+    analysis_id: int
+    position: int
+    canonical_client_id: Optional[int] = None
+    canonical_client_name: Optional[str] = None
+    canonical_contract_id: Optional[int] = None
+    canonical_contract_name: Optional[str] = None
+    period_label: str
+    sheet_name: str
+    section_key: str
+    section_title: str
+    owner_label: Optional[str] = None
+    entry_type: str
+    description: str
+    amount: Optional[float] = None
+    status: Optional[str] = None
+    entry_date: Optional[str] = None
+    due_date: Optional[str] = None
+    counterparty: Optional[str] = None
+    unit: Optional[str] = None
+    notes: Optional[str] = None
+    contract_label: Optional[str] = None
+    contract_start_date: Optional[str] = None
+    contract_end_date: Optional[str] = None
+    source_kind: Optional[FinancialSourceKind] = None
+    reconciliation_status: Optional[FinancialReconciliationStatus] = None
+    reconciliation_score: Optional[float] = None
+    reconciliation_partner_period_label: Optional[str] = None
+    reconciliation_partner_description: Optional[str] = None
+    reconciliation_alias_label: Optional[str] = None
+    reconciliation_note: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class AnalysisReviewStats(BaseModel):
@@ -154,7 +497,10 @@ class AnalysisReviewStats(BaseModel):
     warning_count: int = 0
     scraped_page_count: int = 0
     scraped_link_count: int = 0
+    parse_duration_ms: Optional[int] = None
     scrape_duration_ms: Optional[int] = None
+    parse_cache_hit: bool = False
+    parse_cache_saved_ms: Optional[int] = None
 
 
 class AnalysisReviewResponse(BaseModel):
@@ -169,10 +515,13 @@ class ReportSection(BaseModel):
     fonte: FonteType
     titulo: str
     texto: str
+    table_headers: list[str] = Field(default_factory=list)
+    table_rows: list[list[str]] = Field(default_factory=list)
 
 
 class GenerationTrace(BaseModel):
     id: Optional[int] = None
+    session_public_id: Optional[str] = None
     requested_mode: str
     used_mode: str
     provider: str
@@ -191,7 +540,7 @@ class GeneratedReportPayload(BaseModel):
 
 
 class ReportBuildRequest(BaseModel):
-    titulo_relatorio: str = "Relatorio de Transparencia"
+    titulo_relatorio: str = "Relatorio Tecnico de Analise"
     orgao: Optional[str] = None
     tipo_orgao: Optional[str] = None
     periodo_analise: Optional[str] = None

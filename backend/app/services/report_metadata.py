@@ -9,4 +9,6 @@ DEFAULT_REPORT_TITLE = (
 
 
 def build_report_title(payload: ChecklistParseResult) -> str:
+    if payload.financial_analysis is not None:
+        return "Demonstrativo Financeiro e DRE"
     return DEFAULT_REPORT_TITLE

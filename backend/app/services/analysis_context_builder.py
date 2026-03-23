@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from typing import Optional
 
 from ..models import ChecklistItem, ChecklistParseResult, ScrapedLink, ScrapedPageRecord, WorkbookContextLayer
-from .report_terms import entity_display_name, source_label
+from .report_terms import entity_display_name, entity_type_label, source_label
 
 
 class AnalysisContextBuilder:
     def build_summary(self, parsed: ChecklistParseResult) -> str:
+        if parsed.financial_analysis is not None:
+            return self._build_financial_summary(parsed)
+
         parts = [
             self._build_header(parsed),
             self._build_items_block(parsed.itens_processados),
@@ -25,7 +29,7 @@ class AnalysisContextBuilder:
         entity_name = entity_display_name(parsed.orgao, parsed.tipo_orgao)
         lines = [
             f"Analise registrada para {entity_name}.",
-            f"Tipo de entidade: {parsed.tipo_orgao or 'nao informado'}.",
+            f"Tipo de entidade: {entity_type_label(parsed.tipo_orgao) or 'nao informado'}.",
             f"Periodo da analise: {parsed.periodo_analise or 'nao informado'}.",
             f"SAT: {parsed.sat_numero or 'nao identificado'}.",
             (
@@ -49,6 +53,12 @@ class AnalysisContextBuilder:
             source_lines.append(f"{source_label('esic')}: {parsed.esic_url}")
         if source_lines:
             lines.append("Fontes principais: " + " | ".join(source_lines) + ".")
+        if parsed.reference_links:
+            selected_count = sum(1 for link in parsed.reference_links if link.selected_for_crawl)
+            lines.append(
+                f"Links referenciais do workbook: {len(parsed.reference_links)} identificado(s), "
+                f"{selected_count} usado(s) como semente do crawler."
+            )
         return " ".join(lines)
 
     def _build_items_block(self, items: list[ChecklistItem]) -> str:
@@ -141,3 +151,129 @@ class AnalysisContextBuilder:
             parts.append(f", score {page.page_score}")
         parts.append(")")
         return "".join(parts)
+
+    def _build_financial_summary(self, parsed: ChecklistParseResult) -> str:
+        analysis = parsed.financial_analysis
+        if analysis is None:
+            return ""
+
+        parts = [
+            self._build_financial_header(parsed),
+            self._build_financial_dre_block(parsed),
+            self._build_financial_period_block(parsed),
+            self._build_financial_client_block(parsed),
+            self._build_financial_contract_block(parsed),
+            self._build_context_layers_block(parsed.context_layers),
+            self._build_scraping_block(parsed.scraped_pages),
+        ]
+
+        warning_block = self._build_warning_block(parsed.warnings)
+        if warning_block:
+            parts.append(warning_block)
+
+        return "\n\n".join(part for part in parts if part)
+
+    def _build_financial_header(self, parsed: ChecklistParseResult) -> str:
+        analysis = parsed.financial_analysis
+        if analysis is None:
+            return ""
+        entity_name = entity_display_name(parsed.orgao, parsed.tipo_orgao)
+        lines = [
+            f"Analise financeira registrada para {entity_name}.",
+            f"Arquivos fonte consolidados: {analysis.source_workbook_count}.",
+            f"Periodo consolidado: {parsed.periodo_analise or 'nao informado'}.",
+            f"Abas consolidadas: {', '.join(parsed.parser_options.checklist_sheet_names) or 'nao informadas'}.",
+            f"Periodos identificados: {len(analysis.months)}.",
+            f"Lancamentos estruturados: {analysis.entry_count}.",
+        ]
+        if analysis.detected_entities:
+            lines.append("Entidades ou centros recorrentes: " + ", ".join(analysis.detected_entities[:8]) + ".")
+        if parsed.reference_links:
+            selected_count = sum(1 for link in parsed.reference_links if link.selected_for_crawl)
+            lines.append(
+                f"Links referenciais do workbook: {len(parsed.reference_links)} identificado(s), "
+                f"{selected_count} usado(s) como semente do crawler."
+            )
+        return " ".join(lines)
+
+    def _build_financial_dre_block(self, parsed: ChecklistParseResult) -> str:
+        analysis = parsed.financial_analysis
+        if analysis is None or not analysis.dre_lines:
+            return "DRE consolidada: nenhum demonstrativo estruturado foi calculado."
+
+        lines = ["DRE consolidada:"]
+        for line in analysis.dre_lines:
+            suffix = ""
+            if line.share_of_gross_revenue is not None:
+                suffix = f" ({self._format_percent(line.share_of_gross_revenue)} da receita bruta)"
+            lines.append(f"- {line.label}: {self._format_currency(line.amount)}{suffix}")
+        return "\n".join(lines)
+
+    def _build_financial_period_block(self, parsed: ChecklistParseResult) -> str:
+        analysis = parsed.financial_analysis
+        if analysis is None or not analysis.months:
+            return "Fechamentos mensais: nenhum periodo foi estruturado."
+
+        lines = ["Fechamento por periodo:"]
+        for month in analysis.months[:12]:
+            lines.append(
+                f"- {month.period_label}: receita base {self._format_currency(self._normalize_financial_amount(month.receivables_total))}, "
+                f"custos e despesas {self._format_currency(self._normalize_financial_amount(month.global_expenses_total))}, "
+                f"resultado {self._format_currency(month.net_result)}, "
+                f"pendencias {month.pending_entry_count}."
+            )
+        return "\n".join(lines)
+
+    def _build_financial_client_block(self, parsed: ChecklistParseResult) -> str:
+        analysis = parsed.financial_analysis
+        if analysis is None or not analysis.client_rollups:
+            return "Recebimentos por cliente: nenhum agrupamento foi estruturado."
+
+        lines = ["Recebimentos por cliente:"]
+        for client in analysis.client_rollups[:10]:
+            lines.append(
+                f"- {client.client_name}: recebido {self._format_currency(client.total_received_amount)}, "
+                f"previsto {self._format_currency(client.total_expected_amount)}, "
+                f"pendente {self._format_currency(client.total_pending_amount)}, "
+                f"contratos {client.contract_count}."
+            )
+        if analysis.client_period_rollups:
+            lines.append("")
+            lines.append("Recebimentos por cliente e periodo:")
+            for entry in analysis.client_period_rollups[:18]:
+                lines.append(
+                    f"- {entry.client_name} | {entry.period_label}: recebido {self._format_currency(entry.total_received_amount)}, "
+                    f"previsto {self._format_currency(entry.total_expected_amount)}, "
+                    f"pendente {self._format_currency(entry.total_pending_amount)}."
+                )
+        return "\n".join(lines)
+
+    def _build_financial_contract_block(self, parsed: ChecklistParseResult) -> str:
+        analysis = parsed.financial_analysis
+        if analysis is None or not analysis.contract_rollups:
+            return "Recebimentos por contrato: nenhum agrupamento contratual foi estruturado."
+
+        lines = ["Recebimentos por contrato:"]
+        for contract in analysis.contract_rollups[:12]:
+            client_suffix = f" | cliente {contract.client_name}" if contract.client_name else ""
+            lines.append(
+                f"- {contract.contract_label}{client_suffix}: recebido {self._format_currency(contract.total_received_amount)}, "
+                f"previsto {self._format_currency(contract.total_expected_amount)}, "
+                f"pendente {self._format_currency(contract.total_pending_amount)}."
+            )
+        return "\n".join(lines)
+
+    def _normalize_financial_amount(self, value: Optional[float]) -> Optional[float]:
+        if value is None:
+            return None
+        return abs(float(value))
+
+    def _format_percent(self, value: Optional[float]) -> str:
+        if value is None:
+            return "-"
+        return f"{value * 100:.1f}%".replace(".", ",")
+
+    def _format_currency(self, value: Optional[float]) -> str:
+        if value is None:
+            return "-"
+        return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")

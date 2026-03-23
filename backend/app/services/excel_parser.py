@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib.parse import urlparse
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -17,6 +18,7 @@ from ..models import (
     ParserOptions,
     ParserProfileDefinition,
     StatusType,
+    WorkbookReferenceLink,
 )
 from .workbook_context_extractor import WorkbookContextExtractor
 
@@ -36,7 +38,47 @@ DETAIL_COLUMN_PAIRS = (("D", "E"), ("G", "H"), ("J", "K"), ("M", "N"), ("P", "Q"
 DEFAULT_ALLOWED_GROUPS = ("1", "5")
 DEFAULT_ALLOWED_STATUS = ("Nao", "Parcialmente")
 AUTO_SHEET_SELECTIONS = {"", "*", "auto", "all", "todas", "todas_as_abas", "multi_aba"}
+AUTO_PROFILE_SELECTIONS = {"", "auto", "automatico", "automatic", "detectar"}
+FINANCIAL_MONTH_TITLES = {
+    "janeiro",
+    "fevereiro",
+    "marco",
+    "março",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+}
+NON_CRAWLABLE_EXTENSIONS = {
+    ".pdf",
+    ".csv",
+    ".xls",
+    ".xlsx",
+    ".ods",
+    ".doc",
+    ".docx",
+    ".odt",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+}
 PARSER_PROFILE_MAP = {
+    "auto": ParserProfileDefinition(
+        key="auto",
+        label="Automatico",
+        description="Inspeciona a planilha e escolhe automaticamente entre checklist e financeiro / DRE antes da leitura.",
+        allowed_groups=[],
+        allowed_status=[],
+    ),
     "default": ParserProfileDefinition(
         key="default",
         label="Padrao",
@@ -57,6 +99,13 @@ PARSER_PROFILE_MAP = {
         description="Checklist completo: grupos 1 a 5 e todos os status normalizados.",
         allowed_groups=["1", "2", "3", "4", "5"],
         allowed_status=["Sim", "Nao", "Parcialmente", "Nao se aplica"],
+    ),
+    "financial_dre": ParserProfileDefinition(
+        key="financial_dre",
+        label="Financeiro / DRE",
+        description="Leitura de planilhas financeiras mensais para consolidacao de DRE, custos, recebiveis e resultado.",
+        allowed_groups=[],
+        allowed_status=[],
     ),
 }
 
@@ -134,6 +183,7 @@ class ChecklistParser:
                 )
 
             result.context_layers = self.context_extractor.extract(workbook, result)
+            result.reference_links = self._extract_reference_links(workbook, result)
 
             if not result.itens_processados:
                 result.warnings.append("Nenhum item elegivel encontrado nas abas selecionadas.")
@@ -227,6 +277,159 @@ class ChecklistParser:
         for value in new_values:
             if value not in current_values:
                 current_values.append(value)
+
+    def _extract_reference_links(self, workbook, result: ChecklistParseResult) -> list[WorkbookReferenceLink]:
+        links: list[WorkbookReferenceLink] = []
+        seen_urls: set[str] = set()
+
+        self._append_reference_link(
+            links=links,
+            seen_urls=seen_urls,
+            url=result.site_url,
+            sheet_name="Checklist",
+            cell_reference=None,
+            label="Canal principal identificado na leitura estruturada",
+            context="URL principal usada como origem estruturada do crawler.",
+            source_hint="site_orgao",
+            link_kind="primary",
+        )
+        self._append_reference_link(
+            links=links,
+            seen_urls=seen_urls,
+            url=result.portal_url,
+            sheet_name="Checklist",
+            cell_reference=None,
+            label="Canal complementar identificado na leitura estruturada",
+            context="URL complementar usada como origem estruturada do crawler.",
+            source_hint="portal_transparencia",
+            link_kind="primary",
+        )
+        self._append_reference_link(
+            links=links,
+            seen_urls=seen_urls,
+            url=result.esic_url,
+            sheet_name="Checklist",
+            cell_reference=None,
+            label="Canal de atendimento identificado na leitura estruturada",
+            context="URL de atendimento usada como origem estruturada do crawler.",
+            source_hint="esic",
+            link_kind="primary",
+        )
+
+        for sheet in workbook.worksheets:
+            for row in sheet.iter_rows():
+                row_values = [
+                    (cell.coordinate, _clean_value(cell.value))
+                    for cell in row
+                    if _clean_value(cell.value)
+                ]
+                if not row_values:
+                    continue
+                if not self._should_collect_reference_row(
+                    sheet_name=sheet.title,
+                    row_values=row_values,
+                    selected_checklist_sheets=result.parser_options.checklist_sheet_names,
+                    entity_name=result.orgao,
+                ):
+                    continue
+
+                row_text = " | ".join(value for _, value in row_values)
+                for coordinate, value in row_values:
+                    for url in _extract_urls(value):
+                        self._append_reference_link(
+                            links=links,
+                            seen_urls=seen_urls,
+                            url=url,
+                            sheet_name=sheet.title,
+                            cell_reference=coordinate,
+                            label=self._build_reference_label(row_values, coordinate, url),
+                            context=_truncate_text(row_text, 240),
+                            source_hint=self._infer_reference_source_hint(sheet.title, row_text, url),
+                            link_kind="reference",
+                        )
+
+        return links
+
+    def _append_reference_link(
+        self,
+        links: list[WorkbookReferenceLink],
+        seen_urls: set[str],
+        url: Optional[str],
+        sheet_name: str,
+        cell_reference: Optional[str],
+        label: Optional[str],
+        context: Optional[str],
+        source_hint: FonteType,
+        link_kind: str,
+    ) -> None:
+        if not url:
+            return
+        normalized_url = _normalize_url_for_dedup(url)
+        if not normalized_url or normalized_url in seen_urls:
+            return
+        seen_urls.add(normalized_url)
+        links.append(
+            WorkbookReferenceLink(
+                url=url,
+                sheet_name=sheet_name,
+                cell_reference=cell_reference,
+                label=label,
+                context=context,
+                source_hint=source_hint,
+                link_kind=link_kind,
+                crawlable=_is_crawlable_reference_url(url),
+            )
+        )
+
+    def _build_reference_label(
+        self,
+        row_values: list[tuple[str, str]],
+        coordinate: str,
+        url: str,
+    ) -> Optional[str]:
+        candidates = []
+        for cell_coordinate, value in row_values:
+            if cell_coordinate == coordinate:
+                continue
+            if url in value:
+                continue
+            candidates.append(value)
+        if not candidates:
+            return None
+        return _truncate_text(candidates[0], 120)
+
+    def _infer_reference_source_hint(self, sheet_name: str, context: str, url: str) -> FonteType:
+        haystack = " ".join(part for part in [sheet_name, context, url] if part).lower()
+        if "esic" in haystack or "e-sic" in haystack or "sic" in haystack:
+            return "esic"
+        if "portal" in haystack and "transpar" in haystack:
+            return "portal_transparencia"
+        if any(keyword in haystack for keyword in ("site", "prefeitura", "camara", "câmara", "orgao", "órgão")):
+            return "site_orgao"
+        return "nao_informada"
+
+    def _should_collect_reference_row(
+        self,
+        sheet_name: str,
+        row_values: list[tuple[str, str]],
+        selected_checklist_sheets: list[str],
+        entity_name: Optional[str],
+    ) -> bool:
+        normalized_sheet = _normalize_text(sheet_name)
+        selected_sheets = {_normalize_text(name) for name in selected_checklist_sheets}
+        if normalized_sheet in selected_sheets:
+            return True
+        if not entity_name:
+            return False
+
+        entity_key = _entity_key(entity_name)
+        if not entity_key:
+            return False
+
+        for _, value in row_values:
+            if _entity_key(value) == entity_key:
+                return True
+        return False
 
     def _detect_response_columns(self, sheet) -> list[tuple[str, str]]:
         response_columns: list[tuple[str, str]] = []
@@ -566,11 +769,79 @@ def _clean_value(value: object) -> Optional[str]:
     return text
 
 
-def _extract_url(value: str) -> Optional[str]:
-    match = re.search(r"https?://\S+", value, re.IGNORECASE)
-    if not match:
+def _as_number(value: object) -> Optional[float]:
+    text = _clean_value(value)
+    if text is None:
         return None
-    return match.group(0).rstrip(").,;")
+    normalized = text.replace("R$", "").replace(" ", "")
+    if normalized.count(",") == 1 and normalized.count(".") == 0:
+        normalized = normalized.replace(",", ".")
+    elif normalized.count(",") >= 1 and normalized.count(".") >= 1:
+        normalized = normalized.replace(".", "").replace(",", ".")
+    else:
+        normalized = normalized.replace(",", "")
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
+def _extract_url(value: str) -> Optional[str]:
+    urls = _extract_urls(value)
+    if not urls:
+        return None
+    return urls[0]
+
+
+def _extract_urls(value: str) -> list[str]:
+    matches = re.findall(r"https?://\S+", value, re.IGNORECASE)
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for match in matches:
+        url = match.rstrip(").,;")
+        if url in seen:
+            continue
+        seen.add(url)
+        cleaned.append(url)
+    return cleaned
+
+
+def _normalize_url_for_dedup(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    host = (parsed.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    path = (parsed.path or "").rstrip("/")
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme.lower()}://{host}{path}{query}".rstrip("/")
+
+
+def _entity_key(value: object) -> str:
+    normalized = _normalize_text(value)
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def _is_crawlable_reference_url(value: str) -> bool:
+    lowered = (value or "").strip().lower()
+    if not lowered.startswith(("http://", "https://")):
+        return False
+    for extension in NON_CRAWLABLE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return False
+    return True
+
+
+def _truncate_text(value: Optional[str], limit: int) -> Optional[str]:
+    text = _clean_value(value)
+    if not text:
+        return None
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3].rstrip() + "..."
 
 
 def _normalize_status(value: Optional[str]) -> Optional[str]:
@@ -613,6 +884,30 @@ def list_parser_profiles() -> list[ParserProfileDefinition]:
     return list(PARSER_PROFILE_MAP.values())
 
 
+def get_parser_profile_definition(profile: Optional[str]) -> ParserProfileDefinition:
+    normalized_profile = (profile or "default").strip().lower() or "default"
+    return PARSER_PROFILE_MAP.get(normalized_profile, PARSER_PROFILE_MAP["default"])
+
+
+def resolve_parser_profile_for_workbook(
+    workbook_path: Path,
+    requested_profile: Optional[str] = None,
+) -> str:
+    normalized_profile = (requested_profile or "auto").strip().lower() or "auto"
+    if normalized_profile not in AUTO_PROFILE_SELECTIONS:
+        return get_parser_profile_definition(normalized_profile).key
+
+    workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+    try:
+        if _looks_like_financial_workbook(workbook):
+            return "financial_dre"
+        if _looks_like_checklist_workbook(workbook):
+            return "extended"
+    finally:
+        workbook.close()
+    return "extended"
+
+
 def build_parser_config(
     profile: Optional[str] = None,
     allowed_groups_text: Optional[str] = None,
@@ -622,6 +917,18 @@ def build_parser_config(
 ) -> ParserConfig:
     normalized_profile = (profile or "default").strip().lower() or "default"
     profile_definition = PARSER_PROFILE_MAP.get(normalized_profile, PARSER_PROFILE_MAP["default"])
+    if profile_definition.key == "auto":
+        profile_definition = PARSER_PROFILE_MAP["extended"]
+
+    if profile_definition.key == "financial_dre":
+        normalized_sheet_selection = _normalize_sheet_selection_request(checklist_sheet_name)
+        return ParserConfig(
+            profile=profile_definition.key,
+            allowed_groups=set(),
+            allowed_status=set(),
+            checklist_sheet_name=normalized_sheet_selection,
+            metadata_row=max(1, int(metadata_row or 5)),
+        )
 
     allowed_groups = _parse_csv_values(allowed_groups_text) or profile_definition.allowed_groups
     normalized_groups = sorted({group.strip() for group in allowed_groups if group.strip()})
@@ -656,6 +963,74 @@ def _normalize_sheet_selection_request(value: Optional[str]) -> str:
     if not sheet_names or _is_auto_sheet_selection(value):
         return "auto"
     return ", ".join(sheet_names)
+
+
+def _looks_like_financial_workbook(workbook) -> bool:
+    return any(_looks_like_financial_sheet_signature(sheet) for sheet in workbook.worksheets)
+
+
+def _looks_like_checklist_workbook(workbook) -> bool:
+    return any(_looks_like_checklist_sheet_signature(sheet, metadata_row=5) for sheet in workbook.worksheets)
+
+
+def _looks_like_financial_sheet_signature(sheet) -> bool:
+    normalized_title = _normalize_text(sheet.title)
+    if normalized_title in FINANCIAL_MONTH_TITLES:
+        return True
+    if any(token in normalized_title for token in ("financeiro", "recebidos", "despesas", "construtivo", "flex")):
+        if _looks_like_financial_data_signature(sheet):
+            return True
+    for row_idx in range(1, min((sheet.max_row or 0), 5) + 1):
+        normalized_values = {
+            _normalize_text(sheet.cell(row_idx, column_idx).value)
+            for column_idx in range(1, min((sheet.max_column or 0), 12) + 1)
+        }
+        normalized_values.discard("")
+        if {"cliente", "valor_r", "vencimento_fatura"}.issubset(normalized_values):
+            return True
+        if {"data", "produto"}.issubset(normalized_values) and any(
+            token.startswith("debitos") for token in normalized_values
+        ) and any(token.startswith("creditos") for token in normalized_values):
+            return True
+        row_text = " ".join(sorted(normalized_values))
+        if "painel_financeiro" in row_text or "painel_de_controle" in row_text or "fluxo_financeiro" in row_text:
+            return True
+    return False
+
+
+def _looks_like_financial_data_signature(sheet) -> bool:
+    matched_rows = 0
+    for row_idx in range(1, min((sheet.max_row or 0), 4) + 1):
+        client = _clean_value(sheet.cell(row_idx, 5).value)
+        amount = _clean_value(sheet.cell(row_idx, 7).value)
+        if client and _as_number(amount) is not None:
+            matched_rows += 1
+    return matched_rows >= 2
+
+
+def _looks_like_checklist_sheet_signature(sheet, metadata_row: int) -> bool:
+    normalized_title = _normalize_text(sheet.title)
+    if "checklist" in normalized_title:
+        return True
+    if (sheet.max_row or 0) < metadata_row:
+        return False
+    metadata_cells = next(
+        sheet.iter_rows(min_row=metadata_row, max_row=metadata_row),
+        [],
+    )
+    has_response_column = any(
+        RESPONSE_HEADER_RE.search(_clean_value(cell.value) or "")
+        for cell in metadata_cells
+    )
+    if not has_response_column:
+        return False
+    item_header = _normalize_text(sheet[f"B{metadata_row}"].value)
+    description_header = _normalize_text(sheet[f"C{metadata_row}"].value)
+    return item_header in {"item", "codigo", "item_codigo"} and description_header in {
+        "descricao",
+        "descricao_item",
+        "descricao_do_item",
+    }
 
 
 def _is_auto_sheet_selection(value: Optional[str]) -> bool:

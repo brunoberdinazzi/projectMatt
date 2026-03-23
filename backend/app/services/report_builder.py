@@ -56,8 +56,7 @@ class ReportBuilder:
 
         for section in payload.secoes:
             document.add_heading(section.titulo, level=1)
-            for paragraph in section.texto.split("\n\n"):
-                document.add_paragraph(paragraph)
+            self._add_section_content(document, section)
 
     def _populate_template_report(self, document: Document, payload: ReportBuildRequest) -> None:
         self._add_cover_page(document, payload)
@@ -65,8 +64,7 @@ class ReportBuilder:
 
         for section in payload.secoes:
             self._add_heading(document, section.titulo)
-            for paragraph in section.texto.split("\n\n"):
-                self._add_body_paragraph(document, paragraph)
+            self._add_section_content(document, section)
 
     def _add_cover_page(self, document: Document, payload: ReportBuildRequest) -> None:
         title = document.add_paragraph(style="Normal")
@@ -127,6 +125,40 @@ class ReportBuilder:
     def _add_body_paragraph(self, document: Document, text: str) -> None:
         paragraph = document.add_paragraph(style="Body Text")
         paragraph.add_run(text)
+
+    def _add_section_content(self, document: Document, section) -> None:
+        if section.texto:
+            for paragraph in section.texto.split("\n\n"):
+                self._add_structured_block(document, paragraph)
+        if section.table_headers and section.table_rows:
+            self._add_table(document, section.table_headers, section.table_rows)
+            document.add_paragraph("")
+
+    def _add_structured_block(self, document: Document, text: str) -> None:
+        cleaned = text.strip()
+        if not cleaned:
+            return
+        lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+        if lines and all(line.startswith("- ") for line in lines):
+            for line in lines:
+                paragraph = document.add_paragraph(style="List Bullet")
+                paragraph.add_run(line[2:])
+            return
+        self._add_body_paragraph(document, cleaned)
+
+    def _add_table(self, document: Document, headers: list[str], rows: list[list[str]]) -> None:
+        table = document.add_table(rows=1, cols=len(headers))
+        table.style = "Table Grid"
+        header_cells = table.rows[0].cells
+        for index, header in enumerate(headers):
+            header_cells[index].text = header
+            if header_cells[index].paragraphs and header_cells[index].paragraphs[0].runs:
+                header_cells[index].paragraphs[0].runs[0].bold = True
+
+        for row in rows:
+            row_cells = table.add_row().cells
+            for index, value in enumerate(row[: len(headers)]):
+                row_cells[index].text = value or "-"
 
     def _clear_document_body(self, document: Document) -> None:
         body = document._element.body
@@ -199,6 +231,13 @@ class ReportBuilder:
                     story.append(Paragraph(self._escape(line), styles["DocBody"]))
                     story.append(Spacer(1, 0.08 * cm))
                 story.append(Spacer(1, 0.12 * cm))
+            if section.table_headers and section.table_rows:
+                story.append(Paragraph(self._escape(" | ".join(section.table_headers)), styles["DocBody"]))
+                story.append(Spacer(1, 0.08 * cm))
+                for row in section.table_rows:
+                    story.append(Paragraph(self._escape(" | ".join(row)), styles["DocBody"]))
+                    story.append(Spacer(1, 0.06 * cm))
+                story.append(Spacer(1, 0.14 * cm))
 
         document = SimpleDocTemplate(
             str(output_path),

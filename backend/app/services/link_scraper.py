@@ -485,8 +485,8 @@ class LinkScraper:
 
     def _category_label(self, category: str) -> str:
         labels = {
-            "esic": "e-SIC",
-            "portal_transparencia": "portal da transparencia",
+            "esic": "canal de atendimento",
+            "portal_transparencia": "canal complementar",
             "licitacoes": "licitacoes",
             "contratos": "contratos",
             "obras": "obras",
@@ -495,7 +495,7 @@ class LinkScraper:
             "servidores": "servidores",
             "legislacao": "legislacao",
             "institucional": "institucional",
-            "ouvidoria": "ouvidoria/contato",
+            "ouvidoria": "contato",
             "faq": "FAQ",
             "outros": "outros",
         }

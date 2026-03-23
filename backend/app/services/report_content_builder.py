@@ -32,10 +32,10 @@ RECOMMENDATION_BY_ITEM = {
         "Disponibilizar integralmente e de forma tempestiva os Relatorios de Gestao Fiscal, observando a periodicidade legal aplicavel."
     ),
     "2.6": (
-        "Publicar integralmente as prestacoes de contas encaminhadas ao Tribunal de Contas, em formato legivel e com identificacao clara do exercicio correspondente."
+        "Publicar integralmente os registros de prestacao de contas ou equivalentes referidos no material analisado, em formato legivel e com identificacao clara do periodo correspondente."
     ),
     "2.7": (
-        "Publicar os pareceres previos emitidos pelo Tribunal de Contas sobre as prestacoes de contas, com vinculacao clara ao respectivo exercicio."
+        "Publicar os pareceres, validacoes ou manifestacoes formais vinculados aos registros analisados, com referencia clara ao periodo correspondente."
     ),
     "3.1": (
         "Divulgar informacoes pormenorizadas sobre as receitas, com detalhamento suficiente para permitir consulta e controle social."
@@ -126,8 +126,8 @@ ITEM_SUBJECT_BY_CODE = {
     "2.3": "disponibilizacao da Lei Orcamentaria Anual",
     "2.4": "disponibilizacao do Relatorio Resumido da Execucao Orcamentaria",
     "2.5": "disponibilizacao do Relatorio de Gestao Fiscal",
-    "2.6": "disponibilizacao das prestacoes de contas entregues ao Tribunal de Contas",
-    "2.7": "disponibilizacao dos pareceres previos emitidos pelo Tribunal de Contas",
+    "2.6": "disponibilizacao dos registros de prestacao de contas ou equivalentes",
+    "2.7": "disponibilizacao dos pareceres, validacoes ou manifestacoes formais vinculadas aos registros analisados",
     "3.1": "divulgacao pormenorizada das receitas",
     "3.2": "divulgacao pormenorizada das despesas",
     "3.3": "atualizacao em tempo real de receitas e despesas",
@@ -292,7 +292,7 @@ class ReportContentBuilder:
                 f"No recorte considerado por esta versao do sistema, nao foram identificados nos grupos "
                 f"{self._group_scope_text(payload)} itens com classificacao {self._status_scope_text(payload)}. "
                 "Ainda assim, recomenda-se manter a "
-                "verificacao manual do checklist completo para fins de controle institucional."
+                "verificacao manual do checklist completo para fins de validacao final."
             )
             scoped_warnings = [
                 warning
@@ -481,6 +481,9 @@ class ReportContentBuilder:
         ]
 
     def _esic_issue_phrase(self, item: ChecklistItem) -> str:
+        normalized_description = self._normalize_description(item.descricao_item)
+        if normalized_description:
+            return normalized_description
         phrase_map = {
             "5.4": "mecanismos de acompanhamento posterior das solicitacoes de informacao",
             "5.5": "perguntas e respostas frequentes",
@@ -501,21 +504,25 @@ class ReportContentBuilder:
         return f"{', '.join(cleaned[:-1])} e {cleaned[-1]}"
 
     def _build_recommendation(self, item: ChecklistItem) -> str:
-        specific = RECOMMENDATION_BY_ITEM.get(item.item_codigo)
+        normalized_description = self._normalize_description(item.descricao_item)
+        specific = RECOMMENDATION_BY_ITEM.get(item.item_codigo) if not normalized_description else None
         if specific:
             return specific
 
         description = self._subject_text(item)
         return (
             f"Adequar a disponibilizacao de informacoes referente a {description}, sanando as "
-            "inconsistencias registradas no checklist e assegurando acesso claro ao usuario."
+            "inconsistencias registradas no checklist e assegurando acesso claro ao publico-alvo."
         )
 
     def _subject_text(self, item: ChecklistItem) -> str:
+        normalized_description = self._normalize_description(item.descricao_item)
+        if normalized_description:
+            return normalized_description
         mapped = ITEM_SUBJECT_BY_CODE.get(item.item_codigo)
         if mapped:
             return mapped
-        return self._normalize_description(item.descricao_item)
+        return normalized_description
 
     def _normalize_description(self, description: str) -> str:
         normalized = description.strip()
