@@ -10,7 +10,7 @@ from ..models import (
     ParserDetectionResponse,
     ParserProfileDefinition,
 )
-from ..runtime import ollama_report_content_builder, require_authenticated_user, store_upload
+from ..runtime import ollama_report_content_builder, require_authenticated_user, require_trusted_origin, store_upload
 from ..services.bank_statement_parser import looks_like_bank_statement_pdf
 from ..services.excel_parser import (
     get_parser_profile_definition,
@@ -29,7 +29,7 @@ def parser_profiles(
     return list_parser_profiles()
 
 
-@router.post("/parser/detect", response_model=ParserDetectionResponse)
+@router.post("/parser/detect", response_model=ParserDetectionResponse, dependencies=[Depends(require_trusted_origin)])
 async def parser_detect(
     file: UploadFile = File(...),
     requested_profile: str = Form(default="auto"),

@@ -12,7 +12,7 @@ from .api import (
     scrape_router,
     web_router,
 )
-from .runtime import FRONTEND_STATIC_DIR
+from .runtime import FRONTEND_STATIC_DIR, run_security_preflight
 
 
 class CacheControlStaticFiles(StaticFiles):
@@ -42,3 +42,8 @@ app.include_router(providers_router)
 app.include_router(scrape_router)
 app.include_router(analysis_router)
 app.include_router(reports_router)
+
+
+@app.on_event("startup")
+async def startup_security_preflight() -> None:
+    run_security_preflight()

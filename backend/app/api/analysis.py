@@ -26,6 +26,7 @@ from ..runtime import (
     financial_warehouse_store,
     prompt_builder,
     require_authenticated_session,
+    require_trusted_origin,
     require_authenticated_user,
     resolve_workbook_uploads,
     store_uploads,
@@ -107,7 +108,7 @@ def list_analyses(
     return analysis_store.list_recent_analyses(limit=limit, owner_user_id=current_user.id)
 
 
-@router.post("/analysis/intake", response_model=StoredAnalysisResponse)
+@router.post("/analysis/intake", response_model=StoredAnalysisResponse, dependencies=[Depends(require_trusted_origin)])
 async def analysis_intake(
     file: Optional[UploadFile] = File(default=None),
     files: Optional[list[UploadFile]] = File(default=None),
@@ -245,7 +246,7 @@ def list_financial_aliases(
     )
 
 
-@router.post("/financial-aliases", response_model=FinancialAliasItem)
+@router.post("/financial-aliases", response_model=FinancialAliasItem, dependencies=[Depends(require_trusted_origin)])
 def create_financial_alias(
     payload: FinancialAliasUpsertRequest,
     current_user: AuthUserResponse = Depends(require_authenticated_user),
@@ -264,7 +265,7 @@ def create_financial_alias(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-@router.delete("/financial-aliases", response_model=FinancialAliasItem)
+@router.delete("/financial-aliases", response_model=FinancialAliasItem, dependencies=[Depends(require_trusted_origin)])
 def delete_financial_alias(
     payload: FinancialAliasDeleteRequest,
     current_user: AuthUserResponse = Depends(require_authenticated_user),
@@ -283,7 +284,7 @@ def delete_financial_alias(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-@router.post("/analysis/review", response_model=AnalysisReviewResponse)
+@router.post("/analysis/review", response_model=AnalysisReviewResponse, dependencies=[Depends(require_trusted_origin)])
 async def review_analysis(
     file: Optional[UploadFile] = File(default=None),
     files: Optional[list[UploadFile]] = File(default=None),
@@ -354,7 +355,7 @@ async def review_analysis(
             temp_path.unlink(missing_ok=True)
 
 
-@router.post("/analysis/{analysis_id}/scrape", response_model=StoredAnalysisResponse)
+@router.post("/analysis/{analysis_id}/scrape", response_model=StoredAnalysisResponse, dependencies=[Depends(require_trusted_origin)])
 def scrape_analysis(
     analysis_id: int,
     current_session: AuthenticatedSession = Depends(require_authenticated_session),
@@ -384,7 +385,7 @@ def get_analysis_generations(
     return analysis_workflow_service.list_generations(analysis_id, owner_user_id=current_user.id)
 
 
-@router.post("/checklist/upload", response_model=ChecklistParseResult)
+@router.post("/checklist/upload", response_model=ChecklistParseResult, dependencies=[Depends(require_trusted_origin)])
 async def upload_checklist(
     file: Optional[UploadFile] = File(default=None),
     files: Optional[list[UploadFile]] = File(default=None),
@@ -427,7 +428,7 @@ async def upload_checklist(
             temp_path.unlink(missing_ok=True)
 
 
-@router.post("/prompt/build", response_model=PromptResponse)
+@router.post("/prompt/build", response_model=PromptResponse, dependencies=[Depends(require_trusted_origin)])
 def build_prompt(
     payload: ChecklistParseResult,
     _current_user: AuthUserResponse = Depends(require_authenticated_user),
@@ -436,7 +437,7 @@ def build_prompt(
     return PromptResponse(prompt=prompt)
 
 
-@router.post("/pipeline/run", response_model=PipelineRunResponse)
+@router.post("/pipeline/run", response_model=PipelineRunResponse, dependencies=[Depends(require_trusted_origin)])
 async def run_pipeline(
     file: Optional[UploadFile] = File(default=None),
     files: Optional[list[UploadFile]] = File(default=None),

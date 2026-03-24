@@ -1,35 +1,41 @@
 # Draux Inc.
 
-AI-assisted pipeline for turning structured spreadsheets into technical reports.
+AI-assisted workspace for turning structured spreadsheets and financial statements into technical
+and executive reports.
 
-The project reads a workbook, extracts the relevant checklist items, stores the intake in a local
-SQLite database or PostgreSQL, enriches the analysis with link scraping, builds a compact context for an AI model, and returns a
-report in `DOCX` or `PDF`.
+The project can ingest checklist workbooks, financial control sheets, `.xlsm` files and bank
+statement PDFs, review the extracted structure in a web UI, persist the analysis in SQLite or
+PostgreSQL, and generate reports in `DOCX` or `PDF` using rules, local Ollama models or a remote
+OpenAI-compatible provider.
 
 ## Why this project exists
 
-Many teams work from spreadsheets that already contain the facts, statuses and notes required for a
-report, but still need to rewrite everything manually into narrative form.
+Many teams already keep the facts in spreadsheets, but still lose time rewriting them into reports,
+manual summaries or financial statements.
 
-Draux Inc. automates that middle layer:
+Draux automates that middle layer:
 
-1. ingest the workbook;
-2. normalize the relevant rows;
-3. persist the intake and metadata;
-4. enrich the context by scraping referenced pages;
-5. review the extracted context before generation;
-6. prepare a focused summary for AI generation;
-7. assemble the final report in a reusable template.
+1. detect the input profile automatically;
+2. normalize rows, periods, clients, contracts and evidence;
+3. persist the intake and the derived structure;
+4. enrich the analysis with scraping when relevant;
+5. review the structured output before generation;
+6. assemble a deterministic or AI-assisted report;
+7. keep traceability in the database for reopening and audit.
 
 ## Core capabilities
 
-- Workbook ingestion tuned to a real checklist layout.
+- Automatic parser detection between checklist and financial DRE flows.
+- Checklist parsing with multi-sheet context layers and referenced links.
+- Financial parsing from `.xlsx`, `.xlsm` and bank statement `PDF`.
+- Multi-file DRE consolidation with client, contract and period rollups.
+- Canonical financial warehouse in SQLite or PostgreSQL.
+- Traceability view for financial entries, reconciliation and prompt history.
 - Rule-based report generation.
-- Local AI generation with Ollama.
+- Local AI generation with Ollama, optimized for `deepseek-r1:8b`.
 - Remote AI generation with OpenAI-compatible APIs.
-- Link scraping with contextual classification.
-- Link scraping with evidence scoring, matched terms, prioritized links and controlled-depth crawling.
-- PostgreSQL-ready persistence for analyses, extracted items, scraped pages and summaries.
+- Link scraping with SSRF guard, classification, evidence scoring and controlled-depth crawling.
+- Authenticated workspace with saved analyses and generation history.
 - `DOCX` generation with template preservation.
 - `PDF` export for lightweight sharing.
 
@@ -40,48 +46,43 @@ Web UI
   ->
 FastAPI
   ->
-Workbook parser
+Parser detection
   ->
-Analysis store (SQLite or PostgreSQL)
+Checklist / financial parsers
   ->
-Link scraper
+Operational store (SQLite or PostgreSQL)
   ->
-Context builder
+Canonical financial warehouse
+  ->
+Review and traceability layer
   ->
 AI provider or rule engine
-  ->
-Report composer
   ->
 DOCX / PDF
 ```
 
-## Current workbook model
+## Supported analysis modes
 
-The default parser is tuned to a workbook with:
+### Checklist / extended review
 
-- sheet `Checklist`;
-- item code in column `B`;
-- item description in column `C`;
-- yearly answers in columns `R` and `S`;
-- source reference in column `T`;
-- rationale in column `U`;
-- a trailing observations block, with item code in `B` and note text in `E`.
+The checklist flow still supports the narrow workbook family that originated the project, but it now
+also handles:
 
-The base profile remains intentionally narrow:
+- parser profiles such as `default`, `extended`, `full` and `auto`;
+- multi-sheet checklist ingestion;
+- workbook context layers for heterogeneous sheets;
+- review with items, warnings, prompt preview and scraping evidence.
 
-- groups `1` and `5`;
-- statuses `Nao` and `Parcialmente`;
-- notes linked from the observations block.
+### Financial / DRE
 
-For broader real-world use, the recommended profile is `extended`, which already covers groups `1`
-to `5` while keeping the focus on `Nao` and `Parcialmente`.
+The financial flow now supports:
 
-The parser is now configurable per request through:
-
-- parser profiles such as `default`, `extended` and `full`;
-- explicit group overrides;
-- explicit status overrides;
-- sheet name and metadata row overrides.
+- monthly control spreadsheets in `.xlsx`;
+- richer `.xlsm` control workbooks;
+- multi-file DRE consolidation in one run;
+- bank statement `PDF` ingestion for reconciliation;
+- rollups by client, contract and period;
+- canonical aliases and warehouse-backed traceability.
 
 ## End-to-end flow
 
@@ -89,20 +90,22 @@ The parser is now configurable per request through:
 
 The user uploads:
 
-- a spreadsheet file;
+- one or more spreadsheet files;
+- optional bank statement PDFs in the financial flow;
 - optional document metadata;
 - an optional `DOCX` template;
 - the desired output format;
-- the preferred generation mode.
+- the preferred generation mode or lets the parser stay in `auto`.
 
 ### 2. Persistence
 
 The backend creates an analysis record in the configured database and stores:
 
 - input metadata;
-- extracted items;
-- item details;
-- parser warnings.
+- extracted items or financial structures;
+- parser warnings;
+- prompt-ready summaries;
+- generation audit trail.
 
 ### 3. Context enrichment
 
@@ -120,10 +123,10 @@ If source URLs are available, the backend scrapes those pages and stores:
 
 Before generating the report, the UI can request an analysis review payload showing:
 
-- extracted items;
+- extracted items or DRE structures;
 - parser warnings;
 - scraped pages and discovered links;
-- consolidated summary;
+- consolidated summary and traceability;
 - prompt preview.
 
 ### 5. AI-ready summary
@@ -132,7 +135,8 @@ After review, the backend builds a consolidated summary from the database, so th
 
 - the relevant extracted rows;
 - the scraped context that matters;
-- the metadata needed to draft the report.
+- the metadata needed to draft the report;
+- for financial reports, the database-backed client, contract and period facts.
 
 The AI does not query the database directly. The backend retrieves and condenses the required
 context first.
@@ -151,25 +155,29 @@ The report can be produced by:
 ```text
 backend/
   app/
+    api/
     main.py
     models.py
+    runtime.py
     services/
-      analysis_context_builder.py
-      analysis_store.py
+      analysis_workflow_service.py
+      analysis_report_service.py
       excel_parser.py
+      financial_workbook_parser.py
+      bank_statement_parser.py
+      financial_warehouse_store.py
       link_scraper.py
       openai_report_content_builder.py
       ollama_report_content_builder.py
-      prompt_builder.py
       report_builder.py
-      report_content_builder.py
-      technical_report_composer.py
   data/
-    matt.db
 frontend/
+  src/
+    App.tsx
+    components/
+    lib/
+    types/
   index.html
-  app.js
-  styles.css
 docs/
 scripts/
 ```
@@ -177,8 +185,10 @@ scripts/
 ## Requirements
 
 - Python `3.9+`
+- Node `18+`
 - `pip`
 - optional: Ollama for local generation
+- optional: Docker/Colima for local PostgreSQL
 
 ## Installation
 
@@ -196,6 +206,13 @@ Preferred development command:
 ./scripts/run_dev.sh
 ```
 
+That script:
+
+- loads `.env` automatically when present;
+- builds the frontend;
+- clears stale `uvicorn` processes on port `8000`;
+- starts the backend in reload mode.
+
 Alternative:
 
 ```bash
@@ -210,6 +227,21 @@ If port `8000` is already in use:
 pkill -f "uvicorn backend.app.main:app" || true
 ```
 
+The local runner now loads variables from `.env` automatically when the file exists.
+Start from:
+
+```bash
+cp .env.example .env
+```
+
+If you use Colima instead of Docker Desktop, the local PostgreSQL path is:
+
+```bash
+colima start --cpu 2 --memory 4 --disk 20
+./scripts/start_local_postgres.sh
+./scripts/run_dev.sh
+```
+
 ## Database
 
 By default, analyses are stored in:
@@ -221,16 +253,42 @@ backend/data/matt.db
 To use PostgreSQL instead, configure:
 
 ```bash
-export DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME"
+export DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require"
 ```
 
 The canonical financial warehouse can share the same database or use a dedicated one:
 
 ```bash
-export FINANCE_DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME"
+export FINANCE_DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require"
 ```
 
 If `FINANCE_DATABASE_URL` is omitted, the app falls back to `DATABASE_URL`.
+
+For PostgreSQL, the backend now normalizes connection URLs and automatically appends
+`sslmode=require` when the target is not `localhost`. For local-only development on a loopback
+database, the URL may stay without TLS. If you need an explicit override, use:
+
+```bash
+export DRAUX_DB_SSLMODE="require"
+```
+
+For local-only troubleshooting with a trusted loopback database, you can still force:
+
+```bash
+export DRAUX_DB_SSLMODE="disable"
+```
+
+The startup preflight can be made strict with:
+
+```bash
+export DRAUX_STRICT_SECURITY_PREFLIGHT="1"
+```
+
+For local PostgreSQL on loopback, the repository now also includes:
+
+```bash
+./scripts/start_local_postgres.sh
+```
 
 ### Migrating SQLite to PostgreSQL
 
@@ -248,9 +306,31 @@ Example:
 ./.venv/bin/python scripts/migrate_sqlite_to_postgres.py \
   --source-app-db backend/data/matt.db \
   --source-finance-db backend/data/draux_finance.db \
-  --database-url "postgresql://USER:PASSWORD@HOST:5432/DBNAME" \
+  --database-url "postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require" \
   --truncate-existing
 ```
+
+### PostgreSQL security checklist
+
+For anything beyond localhost, prefer this baseline:
+
+- use `sslmode=require` or `sslmode=verify-full` in `DATABASE_URL` and `FINANCE_DATABASE_URL`;
+- keep `AUTH_COOKIE_SECURE=true` outside localhost;
+- define `DRAUX_TRUSTED_ORIGINS` with your frontend origin list;
+- set a stable external `DRAUX_DATA_KEY` instead of relying on `backend/data/.draux_master_key`;
+- place PostgreSQL on an encrypted disk/volume;
+- keep database dumps and snapshots encrypted at rest;
+- if you enable strict startup checks, use `DRAUX_STRICT_SECURITY_PREFLIGHT=1`.
+
+### Operational helpers
+
+The repository now includes:
+
+- `.env.example` for local and deployment-ready environment variables;
+- `docker-compose.postgres.local.yml` for loopback-only PostgreSQL;
+- `scripts/start_local_postgres.sh` to detect `docker compose`/`docker-compose` and start the local PostgreSQL service;
+- `scripts/backup_postgres.sh` for dumps in custom format, with optional OpenSSL encryption;
+- `docs/deploy-postgres-debian.md` with a step-by-step path for moving from the Mac to a Debian host.
 
 ### Financial analytical views
 
@@ -272,11 +352,12 @@ The database currently keeps:
 - analysis metadata;
 - parser options used for each analysis;
 - extracted checklist items;
+- financial snapshots, periods, clients, contracts and trace entries;
 - item-level detail rows;
 - parser warnings;
 - scraped pages;
 - scraped links;
-- consolidated AI summaries.
+- consolidated AI summaries;
 - generation audit trail with mode, provider, model, prompt snapshot and raw response.
 
 ## API overview
@@ -286,8 +367,19 @@ The database currently keeps:
 - `GET /`
 - `GET /health`
 - `GET /parser/profiles`
+- `POST /parser/detect`
 - `GET /providers/ollama/models`
+- `GET /providers/ollama/status`
 - `GET /scrape/links`
+
+### Auth
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/me`
+- `PUT /auth/profile`
+- `POST /auth/password`
 
 The scraper endpoint also accepts:
 
@@ -409,22 +501,23 @@ export REPORT_TEMPLATE_PATH="/path/to/template.docx"
 
 Current limitations are explicit:
 
-- the parser is still tuned to one workbook family;
-- the base parser profile is narrow by design, although the UI now defaults to `extended`;
+- reconciliation between spreadsheet and bank statement is still conservative by design;
+- some financial naming still depends on source workbook quality;
 - link classification is heuristic;
 - the AI layer receives curated context, not raw workbook dumps;
 - generated `PDF` files do not preserve `DOCX` visual templates.
 
 ## Suggested roadmap
 
-1. Expand parsing beyond the current row groups.
-2. Add configurable workbook schemas.
-3. Promote the scraper context into first-class evidence blocks.
-4. Add review and approval states for persisted analyses.
-5. Introduce automated regression samples for workbook-to-report conversion.
+1. Promote the financial warehouse to the primary source for more report sections.
+2. Improve reconciliation accuracy with stronger alias and counterparty rules.
+3. Add automated regression suites for parser, warehouse and report generation.
+4. Finish the TypeScript migration of the remaining frontend components.
+5. Add deployment recipes for the Debian/PostgreSQL target.
 
 ## Documentation
 
-- [MVP scope](/Users/brunomartins/Desktop/Projetos/Mobile/Projetos/Matt%20/docs/escopo-mvp.md)
-- [Workbook mapping](/Users/brunomartins/Desktop/Projetos/Mobile/Projetos/Matt%20/docs/mapeamento-planilha-relatorio.md)
-- [Project overview](/Users/brunomartins/Desktop/Projetos/Mobile/Projetos/Matt%20/docs/projeto-e-mvp.md)
+- [MVP scope](docs/escopo-mvp.md)
+- [Workbook mapping](docs/mapeamento-planilha-relatorio.md)
+- [Project overview](docs/projeto-e-mvp.md)
+- [PostgreSQL deploy guide](docs/deploy-postgres-debian.md)

@@ -3,8 +3,10 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg
 
@@ -12,6 +14,7 @@ import psycopg
 _AUTOINCREMENT_PATTERN = re.compile(r"\bINTEGER PRIMARY KEY AUTOINCREMENT\b", re.IGNORECASE)
 _CURRENT_TIMESTAMP_PATTERN = re.compile(r"\bCURRENT_TIMESTAMP\b", re.IGNORECASE)
 _PRAGMA_TABLE_INFO_PATTERN = re.compile(r"^\s*PRAGMA\s+table_info\((?P<table>[^)]+)\)\s*$", re.IGNORECASE)
+_SECURE_POSTGRES_SSLMODES = {"require", "verify-ca", "verify-full"}
 
 
 class DatabaseRow:
@@ -205,9 +208,7 @@ def resolve_database_url(
 ) -> str:
     configured = (database_url or os.getenv("DATABASE_URL") or "").strip()
     if configured:
-        if configured.startswith("postgresql+"):
-            return "postgresql://" + configured.split("://", 1)[1]
-        return configured
+        return normalize_database_url(configured)
 
     if default_sqlite_path is None:
         raise ValueError("A database URL or default SQLite path must be provided.")
@@ -227,3 +228,92 @@ def connect_database(
         raw_connection = psycopg.connect(resolved_url, autocommit=False)
         return DatabaseConnection("postgres", raw_connection)
     raise ValueError(f"Unsupported database URL: {resolved_url}")
+
+
+def normalize_database_url(database_url: str, *, sqlalchemy: bool = False) -> str:
+    normalized = database_url.strip()
+    if sqlalchemy:
+        if normalized.startswith("postgres://"):
+            normalized = "postgresql+psycopg://" + normalized.split("://", 1)[1]
+        elif normalized.startswith("postgresql://"):
+            normalized = "postgresql+psycopg://" + normalized.split("://", 1)[1]
+    else:
+        if normalized.startswith("postgresql+"):
+            normalized = "postgresql://" + normalized.split("://", 1)[1]
+        elif normalized.startswith("postgres://"):
+            normalized = "postgresql://" + normalized.split("://", 1)[1]
+    return ensure_postgres_sslmode(normalized)
+
+
+def ensure_postgres_sslmode(database_url: str) -> str:
+    normalized = database_url.strip()
+    if not is_postgres_database_url(normalized):
+        return normalized
+
+    parsed = urlsplit(normalized)
+    query_items = parse_qsl(parsed.query, keep_blank_values=True)
+    for key, value in query_items:
+        if key.lower() == "sslmode" and value.strip():
+            return normalized
+
+    configured_sslmode = (os.getenv("DRAUX_DB_SSLMODE") or "").strip()
+    if configured_sslmode:
+        sslmode = configured_sslmode
+    elif is_local_postgres_database_url(normalized):
+        return normalized
+    else:
+        sslmode = "require"
+
+    query_items.append(("sslmode", sslmode))
+    return urlunsplit(parsed._replace(query=urlencode(query_items)))
+
+
+def is_postgres_database_url(database_url: str) -> bool:
+    normalized = database_url.strip().lower()
+    return normalized.startswith(("postgres://", "postgresql://", "postgresql+"))
+
+
+def get_postgres_sslmode(database_url: str) -> Optional[str]:
+    if not is_postgres_database_url(database_url):
+        return None
+    parsed = urlsplit(database_url)
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key.lower() == "sslmode":
+            return value.strip().lower() or None
+    return None
+
+
+def is_local_postgres_database_url(database_url: str) -> bool:
+    host = _postgres_transport_host(database_url)
+    if not host:
+        return True
+    if host.startswith("/"):
+        return True
+
+    normalized_host = host.strip().strip("[]").lower()
+    if normalized_host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+
+    try:
+        address = ip_address(normalized_host)
+    except ValueError:
+        return False
+    return address.is_loopback
+
+
+def postgres_url_uses_secure_transport(database_url: str) -> bool:
+    if not is_postgres_database_url(database_url):
+        return True
+    if is_local_postgres_database_url(database_url):
+        return True
+    return (get_postgres_sslmode(database_url) or "") in _SECURE_POSTGRES_SSLMODES
+
+
+def _postgres_transport_host(database_url: str) -> str:
+    parsed = urlsplit(database_url)
+    if parsed.hostname:
+        return parsed.hostname
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key.lower() == "host" and value.strip():
+            return value.strip()
+    return ""

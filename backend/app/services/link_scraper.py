@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ipaddress
+import socket
 from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Optional
@@ -77,6 +79,7 @@ class LinkScraperConfig:
     crawl_depth: int = 1
     crawl_max_pages: int = 4
     follow_score_threshold: int = 38
+    max_redirects: int = 5
     user_agent: str = "DrauxCrawler/0.3 (+https://localhost; spreadsheet to report)"
 
 
@@ -216,13 +219,13 @@ class LinkScraper:
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=self.config.timeout_seconds,
             headers={"User-Agent": self.config.user_agent},
         )
 
     def _fetch_page(self, client: httpx.Client, requested_url: str, limit: int) -> _FetchResult:
-        response = client.get(requested_url)
+        response = self._send_safe_request(client, requested_url)
         response.raise_for_status()
 
         final_url = str(response.url)
@@ -255,7 +258,71 @@ class LinkScraper:
             raise ValueError("Informe uma URL para analise.")
         if "://" not in cleaned:
             cleaned = f"https://{cleaned}"
+        parsed = urlparse(cleaned)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            raise ValueError("Use apenas URLs http ou https.")
+        self._assert_public_target(cleaned)
         return cleaned
+
+    def _send_safe_request(self, client: httpx.Client, requested_url: str) -> httpx.Response:
+        current_url = requested_url
+        for _ in range(self.config.max_redirects + 1):
+            self._assert_public_target(current_url)
+            response = client.get(current_url)
+            if response.is_redirect:
+                redirect_target = response.headers.get("location")
+                if not redirect_target:
+                    raise ValueError("A URL respondeu com redirecionamento invalido.")
+                current_url = urljoin(str(response.url), redirect_target)
+                continue
+            return response
+        raise ValueError("A URL excedeu o limite seguro de redirecionamentos.")
+
+    def _assert_public_target(self, url: str) -> None:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").strip().lower()
+        if not hostname:
+            raise ValueError("A URL informada nao possui host valido.")
+        if hostname in {"localhost", "localhost.localdomain"}:
+            raise ValueError("Nao e permitido rastrear hosts locais ou privados.")
+
+        try:
+            port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        except ValueError as exc:
+            raise ValueError("A URL informada possui porta invalida.") from exc
+
+        resolved_addresses = self._resolve_hostname(hostname, port)
+        if not resolved_addresses:
+            raise ValueError("Nao foi possivel resolver o host informado.")
+
+        for address in resolved_addresses:
+            if self._is_blocked_ip(address):
+                raise ValueError("Nao e permitido rastrear hosts locais, privados ou reservados.")
+
+    def _resolve_hostname(self, hostname: str, port: int) -> set[str]:
+        try:
+            results = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise ValueError("Nao foi possivel resolver o host informado.") from exc
+
+        addresses: set[str] = set()
+        for result in results:
+            sockaddr = result[4]
+            if not sockaddr:
+                continue
+            addresses.add(sockaddr[0])
+        return addresses
+
+    def _is_blocked_ip(self, raw_ip: str) -> bool:
+        ip = ipaddress.ip_address(raw_ip)
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
 
     def _page_title(self, soup: BeautifulSoup) -> Optional[str]:
         if soup.title and soup.title.string:

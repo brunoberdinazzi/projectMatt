@@ -147,6 +147,18 @@ class AuthStore:
             )
             conn.commit()
 
+    def revoke_sessions_for_user(self, user_id: int, revoked_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE auth_sessions
+                SET revoked_at = COALESCE(revoked_at, ?)
+                WHERE user_id = ? AND revoked_at IS NULL
+                """,
+                (revoked_at, user_id),
+            )
+            conn.commit()
+
     def _connect(self) -> DatabaseConnection:
         connection = connect_database(database_url=self.database_url)
         connection.execute("PRAGMA foreign_keys = ON")

@@ -11,6 +11,7 @@ from ..runtime import (
     analysis_workflow_service,
     report_builder,
     require_authenticated_session,
+    require_trusted_origin,
     require_authenticated_user,
     resolve_workbook_uploads,
     store_template_upload,
@@ -24,7 +25,7 @@ from ..services.auth_service import AuthenticatedSession
 router = APIRouter()
 
 
-@router.post("/analysis/{analysis_id}/report")
+@router.post("/analysis/{analysis_id}/report", dependencies=[Depends(require_trusted_origin)])
 async def generate_report_from_analysis(
     analysis_id: int,
     background_tasks: BackgroundTasks,
@@ -55,7 +56,7 @@ async def generate_report_from_analysis(
             template_path.unlink(missing_ok=True)
 
 
-@router.post("/report/build")
+@router.post("/report/build", dependencies=[Depends(require_trusted_origin)])
 def build_report(
     payload: ReportBuildRequest,
     background_tasks: BackgroundTasks,
@@ -71,7 +72,7 @@ def build_report(
     )
 
 
-@router.post("/report/generate")
+@router.post("/report/generate", dependencies=[Depends(require_trusted_origin)])
 async def generate_report(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(default=None),

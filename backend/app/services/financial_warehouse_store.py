@@ -35,6 +35,7 @@ from ..models import (
     FinancialPeriodSummary,
     FinancialStatementLine,
 )
+from .app_database import normalize_database_url
 
 Base = declarative_base()
 
@@ -51,12 +52,7 @@ def _default_finance_database_url() -> str:
 
 
 def _normalize_sqlalchemy_database_url(database_url: str) -> str:
-    normalized = database_url.strip()
-    if normalized.startswith("postgres://"):
-        return "postgresql+psycopg://" + normalized.split("://", 1)[1]
-    if normalized.startswith("postgresql://"):
-        return "postgresql+psycopg://" + normalized.split("://", 1)[1]
-    return normalized
+    return normalize_database_url(database_url, sqlalchemy=True)
 
 
 class FinanceAnalysisSnapshot(Base):

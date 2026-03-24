@@ -44,7 +44,9 @@ class AuthService:
         self.cookie_name = cookie_name or os.getenv("AUTH_COOKIE_NAME", "draux_session")
         self.session_ttl_hours = session_ttl_hours or int(os.getenv("AUTH_SESSION_TTL_HOURS", "168"))
         env_secure = os.getenv("AUTH_COOKIE_SECURE", "").strip().lower()
-        self.cookie_secure = cookie_secure if cookie_secure is not None else env_secure in {"1", "true", "yes"}
+        self.cookie_secure_override = cookie_secure if cookie_secure is not None else (
+            env_secure in {"1", "true", "yes"} if env_secure else None
+        )
         self.password_hasher = PasswordHasher(
             time_cost=3,
             memory_cost=65536,
@@ -59,7 +61,7 @@ class AuthService:
         self._validate_credentials(cleaned_name, normalized_email, password)
 
         if self.auth_store.get_user_by_email(normalized_email):
-            raise HTTPException(status_code=409, detail="Ja existe uma conta com este email.")
+            raise HTTPException(status_code=409, detail="Nao foi possivel concluir o cadastro com os dados informados.")
 
         user_id = self.auth_store.create_user(
             full_name=cleaned_name,
@@ -100,7 +102,14 @@ class AuthService:
         self.auth_store.update_user_profile(user_id=user_id, full_name=cleaned_name, email=normalized_email)
         return self._row_to_user(self.auth_store.get_user_by_id(user_id))
 
-    def change_password(self, user_id: int, current_password: str, new_password: str) -> None:
+    def change_password(
+        self,
+        user_id: int,
+        current_password: str,
+        new_password: str,
+        response: Optional[Response] = None,
+        request: Optional[Request] = None,
+    ) -> Optional[AuthSessionInfo]:
         user_row = self.auth_store.get_user_auth_by_id(user_id)
         if user_row is None:
             raise HTTPException(status_code=404, detail="Conta nao encontrada.")
@@ -113,8 +122,20 @@ class AuthService:
             raise HTTPException(status_code=400, detail="A nova senha precisa ser diferente da atual.")
 
         self.auth_store.update_user_password(user_id=user_id, password_hash=self._hash_password(new_password))
+        self.auth_store.revoke_sessions_for_user(
+            user_id=user_id,
+            revoked_at=datetime.now(timezone.utc).isoformat(),
+        )
+        if response is None:
+            return None
+        return self.create_session(response, self._row_to_user(user_row), request=request)
 
-    def create_session(self, response: Response, user: AuthUserResponse) -> AuthSessionInfo:
+    def create_session(
+        self,
+        response: Response,
+        user: AuthUserResponse,
+        request: Optional[Request] = None,
+    ) -> AuthSessionInfo:
         session_token = secrets.token_urlsafe(32)
         session_public_id = f"sess_{secrets.token_urlsafe(9)}"
         issued_at = datetime.now(timezone.utc)
@@ -129,7 +150,7 @@ class AuthService:
             key=self.cookie_name,
             value=session_token,
             httponly=True,
-            secure=self.cookie_secure,
+            secure=self._should_use_secure_cookie(request),
             samesite="lax",
             max_age=self.session_ttl_hours * 3600,
             expires=self.session_ttl_hours * 3600,
@@ -232,6 +253,21 @@ class AuthService:
 
     def _hash_token(self, token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def _should_use_secure_cookie(self, request: Optional[Request]) -> bool:
+        if self.cookie_secure_override is not None:
+            return self.cookie_secure_override
+        if request is None:
+            return True
+
+        forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+        scheme = forwarded_proto or request.url.scheme.lower()
+        host = (request.url.hostname or "").strip().lower()
+        if scheme == "https":
+            return True
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return False
+        return True
 
     def _row_to_user(self, row) -> AuthUserResponse:
         return AuthUserResponse(
