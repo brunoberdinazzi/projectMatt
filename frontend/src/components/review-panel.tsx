@@ -54,6 +54,7 @@ import type {
   FinancialPeriodSummary,
   FinancialStatementLine,
   FinancialTraceEntry,
+  FinancialWarehouseOverview,
   GenerationTraceItem,
   TabDescriptor,
   WorkspaceMetric,
@@ -645,6 +646,7 @@ export function ReviewPanel({
 }: ReviewPanelProps) {
   const analysisId = review?.analysis_id ?? 0;
   const financialAnalysis = review?.parsed?.financial_analysis ?? null;
+  const warehouseOverview: FinancialWarehouseOverview | null = review?.parsed?.warehouse_overview ?? null;
   const isFinancialAnalysis = Boolean(financialAnalysis);
   const reviewWarningCount = review?.parsed?.warnings?.length ?? 0;
   const reviewItemCount = isFinancialAnalysis
@@ -661,22 +663,43 @@ export function ReviewPanel({
   const summaryNetResult = getFinancialLineAmount(financialAnalysis, "net_result");
   const summaryInflows = getFinancialLineAmount(financialAnalysis, "operating_inflows");
   const summaryExpenses = getFinancialLineAmount(financialAnalysis, "global_expenses");
-  const topClient = clientRollups.reduce<FinancialClientRollup | null>((bestClient, client) => {
-    if (!bestClient || client.total_received_amount > bestClient.total_received_amount) {
-      return client;
-    }
-    return bestClient;
-  }, null);
-  const topContract = contractRollups.reduce<FinancialContractRollup | null>((bestContract, contract) => {
-    if (!bestContract || contract.total_received_amount > bestContract.total_received_amount) {
-      return contract;
-    }
-    return bestContract;
-  }, null);
+  const warehouseTopClient = warehouseOverview?.top_clients?.[0] ?? null;
+  const warehouseTopContract = warehouseOverview?.top_contracts?.[0] ?? null;
+  const warehouseTopPeriod = warehouseOverview?.top_periods?.[0] ?? null;
+  const topClient = warehouseTopClient
+    ? ({
+        client_name: warehouseTopClient.client_name,
+        total_received_amount: warehouseTopClient.total_received_amount,
+      } as FinancialClientRollup)
+    : clientRollups.reduce<FinancialClientRollup | null>((bestClient, client) => {
+        if (!bestClient || client.total_received_amount > bestClient.total_received_amount) {
+          return client;
+        }
+        return bestClient;
+      }, null);
+  const topContract = warehouseTopContract
+    ? ({
+        contract_label: warehouseTopContract.contract_label,
+        total_received_amount: warehouseTopContract.total_received_amount,
+      } as FinancialContractRollup)
+    : contractRollups.reduce<FinancialContractRollup | null>((bestContract, contract) => {
+        if (!bestContract || contract.total_received_amount > bestContract.total_received_amount) {
+          return contract;
+        }
+        return bestContract;
+      }, null);
   const financialSnapshotMetrics: WorkspaceMetric[] = isFinancialAnalysis
     ? [
-        { icon: FileSearch, label: "Clientes", value: String(clientRollups.length) },
-        { icon: Layers3, label: "Contratos", value: String(contractRollups.length) },
+        {
+          icon: FileSearch,
+          label: "Clientes",
+          value: String(warehouseOverview?.client_count ?? clientRollups.length),
+        },
+        {
+          icon: Layers3,
+          label: "Contratos",
+          value: String(warehouseOverview?.contract_count ?? contractRollups.length),
+        },
         {
           icon: Waypoints,
           label: "Maior cliente",
@@ -834,12 +857,12 @@ export function ReviewPanel({
         {
           icon: FileSpreadsheet,
           label: "Períodos",
-          value: String(financialAnalysis?.months?.length ?? 0),
+          value: String(warehouseOverview?.period_count ?? financialAnalysis?.months?.length ?? 0),
         },
         {
           icon: FileSearch,
           label: "Lançamentos",
-          value: String(review.stats?.extracted_item_count ?? 0),
+          value: String(warehouseOverview?.entry_count ?? review.stats?.extracted_item_count ?? 0),
         },
         {
           icon: Sparkles,
@@ -1173,6 +1196,56 @@ export function ReviewPanel({
                     <EmptyBlock message="Nenhum detalhe adicional de escopo foi estruturado nesta análise." />
                   )}
                 </article>
+
+                {isFinancialAnalysis && warehouseOverview?.snapshot_available ? (
+                  <article className="summary-card">
+                    <div className="card-head">
+                      <div>
+                        <h3>Perspectiva canônica do banco</h3>
+                        <p className="meta-line">
+                          Rankings lidos direto do warehouse, sem depender só do payload salvo da análise.
+                        </p>
+                      </div>
+                      <StatusPill tone="ready" icon={Fingerprint}>
+                        Warehouse
+                      </StatusPill>
+                    </div>
+                    <div className="overview-mini-metrics">
+                      <FinancialRollupMetric
+                        label="Clientes"
+                        value={String(warehouseOverview.client_count)}
+                      />
+                      <FinancialRollupMetric
+                        label="Contratos"
+                        value={String(warehouseOverview.contract_count)}
+                      />
+                      <FinancialRollupMetric
+                        label="Lançamentos"
+                        value={String(warehouseOverview.entry_count)}
+                      />
+                      <FinancialRollupMetric
+                        label="Melhor período"
+                        value={
+                          warehouseTopPeriod
+                            ? `${warehouseTopPeriod.period_label} | ${formatCompactCurrency(warehouseTopPeriod.net_result)}`
+                            : "-"
+                        }
+                      />
+                    </div>
+                    <div className="trace-badges">
+                      {warehouseTopClient ? (
+                        <Tag icon={Waypoints}>
+                          {`Cliente líder: ${compactEntityLabel(warehouseTopClient.client_name)} | ${formatCompactCurrency(warehouseTopClient.total_received_amount)}`}
+                        </Tag>
+                      ) : null}
+                      {warehouseTopContract ? (
+                        <Tag icon={Sparkles}>
+                          {`Contrato líder: ${compactEntityLabel(warehouseTopContract.contract_label)} | ${formatCompactCurrency(warehouseTopContract.total_received_amount)}`}
+                        </Tag>
+                      ) : null}
+                    </div>
+                  </article>
+                ) : null}
               </div>
 
               <ReviewSection

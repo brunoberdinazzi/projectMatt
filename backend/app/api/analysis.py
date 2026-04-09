@@ -15,6 +15,8 @@ from ..models import (
     FinancialAliasItem,
     FinancialAliasUpsertRequest,
     FinancialEntryTraceItem,
+    FinancialWarehouseBackfillResponse,
+    FinancialWarehouseSyncResponse,
     GenerationTrace,
     PipelineRunResponse,
     PromptResponse,
@@ -195,6 +197,42 @@ def get_analysis_review(
 ) -> AnalysisReviewResponse:
     parsed = analysis_workflow_service.get_analysis_or_404(analysis_id, owner_user_id=current_user.id)
     return analysis_workflow_service.build_review_response(analysis_id, parsed)
+
+
+@router.post(
+    "/analysis/{analysis_id}/warehouse/sync",
+    response_model=FinancialWarehouseSyncResponse,
+    dependencies=[Depends(require_trusted_origin)],
+)
+def sync_analysis_financial_warehouse(
+    analysis_id: int,
+    force: bool = True,
+    current_user: AuthUserResponse = Depends(require_authenticated_user),
+) -> FinancialWarehouseSyncResponse:
+    return analysis_workflow_service.sync_financial_warehouse_snapshot(
+        analysis_id=analysis_id,
+        owner_user_id=current_user.id,
+        force=force,
+    )
+
+
+@router.post(
+    "/analyses/warehouse/backfill",
+    response_model=FinancialWarehouseBackfillResponse,
+    dependencies=[Depends(require_trusted_origin)],
+)
+def backfill_financial_warehouse(
+    limit: int = 200,
+    force: bool = False,
+    current_user: AuthUserResponse = Depends(require_authenticated_user),
+) -> FinancialWarehouseBackfillResponse:
+    if limit < 1 or limit > 1000:
+        raise HTTPException(status_code=400, detail="Use limit entre 1 e 1000.")
+    return analysis_workflow_service.backfill_financial_warehouse_snapshots(
+        owner_user_id=current_user.id,
+        limit=limit,
+        force=force,
+    )
 
 
 @router.get("/analysis/{analysis_id}/financial-entries", response_model=list[FinancialEntryTraceItem])

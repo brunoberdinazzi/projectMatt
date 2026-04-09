@@ -177,6 +177,7 @@ class AnalysisContextBuilder:
         analysis = parsed.financial_analysis
         if analysis is None:
             return ""
+        warehouse_overview = parsed.warehouse_overview
         entity_name = entity_display_name(parsed.orgao, parsed.tipo_orgao)
         lines = [
             f"Analise financeira registrada para {entity_name}.",
@@ -186,6 +187,13 @@ class AnalysisContextBuilder:
             f"Periodos identificados: {len(analysis.months)}.",
             f"Lancamentos estruturados: {analysis.entry_count}.",
         ]
+        if warehouse_overview and warehouse_overview.snapshot_available:
+            lines.append(
+                "Warehouse canônico disponível: "
+                f"{warehouse_overview.client_count} cliente(s), "
+                f"{warehouse_overview.contract_count} contrato(s) e "
+                f"{warehouse_overview.entry_count} lançamento(s) rastreáveis."
+            )
         if analysis.detected_entities:
             lines.append("Entidades ou centros recorrentes: " + ", ".join(analysis.detected_entities[:8]) + ".")
         if parsed.reference_links:
@@ -226,6 +234,27 @@ class AnalysisContextBuilder:
 
     def _build_financial_client_block(self, parsed: ChecklistParseResult) -> str:
         analysis = parsed.financial_analysis
+        warehouse_overview = parsed.warehouse_overview
+        if warehouse_overview and warehouse_overview.top_clients:
+            lines = ["Recebimentos por cliente (warehouse canônico):"]
+            for client in warehouse_overview.top_clients[:10]:
+                lines.append(
+                    f"- {client.client_name}: recebido {self._format_currency(client.total_received_amount)}, "
+                    f"previsto {self._format_currency(client.total_expected_amount)}, "
+                    f"pendente {self._format_currency(client.total_pending_amount)}, "
+                    f"contratos {client.contract_count}."
+                )
+            if analysis is not None and analysis.client_period_rollups:
+                lines.append("")
+                lines.append("Recebimentos por cliente e periodo:")
+                for entry in analysis.client_period_rollups[:18]:
+                    lines.append(
+                        f"- {entry.client_name} | {entry.period_label}: recebido {self._format_currency(entry.total_received_amount)}, "
+                        f"previsto {self._format_currency(entry.total_expected_amount)}, "
+                        f"pendente {self._format_currency(entry.total_pending_amount)}."
+                    )
+            return "\n".join(lines)
+
         if analysis is None or not analysis.client_rollups:
             return "Recebimentos por cliente: nenhum agrupamento foi estruturado."
 
@@ -250,6 +279,18 @@ class AnalysisContextBuilder:
 
     def _build_financial_contract_block(self, parsed: ChecklistParseResult) -> str:
         analysis = parsed.financial_analysis
+        warehouse_overview = parsed.warehouse_overview
+        if warehouse_overview and warehouse_overview.top_contracts:
+            lines = ["Recebimentos por contrato (warehouse canônico):"]
+            for contract in warehouse_overview.top_contracts[:12]:
+                client_suffix = f" | cliente {contract.client_name}" if contract.client_name else ""
+                lines.append(
+                    f"- {contract.contract_label}{client_suffix}: recebido {self._format_currency(contract.total_received_amount)}, "
+                    f"previsto {self._format_currency(contract.total_expected_amount)}, "
+                    f"pendente {self._format_currency(contract.total_pending_amount)}."
+                )
+            return "\n".join(lines)
+
         if analysis is None or not analysis.contract_rollups:
             return "Recebimentos por contrato: nenhum agrupamento contratual foi estruturado."
 

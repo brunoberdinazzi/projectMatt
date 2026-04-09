@@ -34,6 +34,10 @@ from ..models import (
     FinancialContractRollup,
     FinancialPeriodSummary,
     FinancialStatementLine,
+    FinancialWarehouseOverview,
+    FinancialWarehouseTopClient,
+    FinancialWarehouseTopContract,
+    FinancialWarehouseTopPeriod,
 )
 from .app_database import normalize_database_url
 
@@ -1247,6 +1251,13 @@ class FinancialWarehouseStore:
             candidates.append(str(value).strip())
         return candidates
 
+    def has_snapshot(self, analysis_id: int) -> bool:
+        with self.session_factory() as session:
+            existing = session.execute(
+                select(FinanceAnalysisSnapshot.id).where(FinanceAnalysisSnapshot.analysis_id == int(analysis_id))
+            ).scalar_one_or_none()
+        return existing is not None
+
     def summarize_analysis(self, analysis_id: int) -> Optional[str]:
         snapshot = self._load_snapshot(analysis_id)
 
@@ -1310,6 +1321,57 @@ class FinancialWarehouseStore:
             )
             lines.append(f"- Periodos de maior resultado: {top_periods_label}.")
         return "\n".join(lines)
+
+    def build_analysis_overview(self, analysis_id: int) -> Optional[FinancialWarehouseOverview]:
+        snapshot = self._load_snapshot(analysis_id)
+        if snapshot is None:
+            return None
+
+        top_clients = [
+            FinancialWarehouseTopClient(
+                canonical_client_id=row.get("canonical_client_id"),
+                client_name=str(row.get("canonical_client_name") or row.get("client_name") or "-"),
+                total_received_amount=float(row.get("total_received_amount") or 0.0),
+                total_expected_amount=float(row.get("total_expected_amount") or 0.0),
+                total_pending_amount=float(row.get("total_pending_amount") or 0.0),
+                contract_count=int(row.get("contract_count") or 0),
+            )
+            for row in self.list_top_clients(analysis_id, limit=5)
+        ]
+        top_contracts = [
+            FinancialWarehouseTopContract(
+                canonical_contract_id=row.get("canonical_contract_id"),
+                contract_label=str(row.get("canonical_contract_name") or row.get("contract_label") or "-"),
+                client_name=str(row.get("canonical_client_name") or row.get("client_name") or "-"),
+                total_received_amount=float(row.get("total_received_amount") or 0.0),
+                total_expected_amount=float(row.get("total_expected_amount") or 0.0),
+                total_pending_amount=float(row.get("total_pending_amount") or 0.0),
+                entry_count=int(row.get("entry_count") or 0),
+            )
+            for row in self.list_top_contracts(analysis_id, limit=5)
+        ]
+        top_periods = [
+            FinancialWarehouseTopPeriod(
+                period_label=str(row.get("period_label") or "-"),
+                net_result=float(row.get("net_result") or 0.0),
+                gross_revenue_total=float(row.get("gross_revenue_total") or 0.0),
+                global_expenses_total=float(row.get("global_expenses_total") or 0.0),
+                pending_entry_count=int(row.get("pending_entry_count") or 0),
+            )
+            for row in self.list_period_results(analysis_id, limit=5)
+        ]
+
+        return FinancialWarehouseOverview(
+            analysis_id=analysis_id,
+            snapshot_available=True,
+            entry_count=len(snapshot.entries) or int(snapshot.entry_count or 0),
+            client_count=len(snapshot.clients),
+            contract_count=len(snapshot.contracts),
+            period_count=len(snapshot.periods),
+            top_clients=top_clients,
+            top_contracts=top_contracts,
+            top_periods=top_periods,
+        )
 
     def load_financial_analysis(self, analysis_id: int) -> Optional[FinancialAnalysisResult]:
         snapshot = self._load_snapshot(analysis_id)
@@ -1444,6 +1506,186 @@ class FinancialWarehouseStore:
                     """
                 ),
                 {"analysis_id": analysis_id, "limit": int(limit)},
+            ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def list_period_timeline(self, analysis_id: int, limit: int = 120) -> list[dict[str, object]]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM finance_period_result_view
+                    WHERE analysis_id = :analysis_id
+                    ORDER BY position ASC
+                    LIMIT :limit
+                    """
+                ),
+                {"analysis_id": analysis_id, "limit": int(limit)},
+            ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def list_period_client_highlights(
+        self,
+        analysis_id: int,
+        period_label: str,
+        limit: int = 3,
+    ) -> list[dict[str, object]]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT
+                        snapshots.analysis_id AS analysis_id,
+                        client_periods.position AS position,
+                        client_periods.canonical_client_id AS canonical_client_id,
+                        client_periods.canonical_client_name AS canonical_client_name,
+                        client_periods.client_name AS client_name,
+                        client_periods.period_label AS period_label,
+                        client_periods.total_received_amount AS total_received_amount,
+                        client_periods.total_expected_amount AS total_expected_amount,
+                        client_periods.total_pending_amount AS total_pending_amount,
+                        client_periods.contract_count AS contract_count,
+                        client_periods.contract_labels_json AS contract_labels_json
+                    FROM finance_client_periods AS client_periods
+                    JOIN finance_analysis_snapshots AS snapshots ON snapshots.id = client_periods.snapshot_id
+                    WHERE snapshots.analysis_id = :analysis_id
+                      AND client_periods.period_label = :period_label
+                    ORDER BY client_periods.total_received_amount DESC NULLS LAST, client_periods.position ASC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "analysis_id": analysis_id,
+                    "period_label": period_label.strip(),
+                    "limit": int(limit),
+                },
+            ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def list_client_period_timeline(
+        self,
+        analysis_id: int,
+        canonical_client_id: Optional[int] = None,
+        client_name: Optional[str] = None,
+        limit: int = 24,
+    ) -> list[dict[str, object]]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT
+                        snapshots.analysis_id AS analysis_id,
+                        COALESCE(periods.position, client_periods.position) AS period_position,
+                        client_periods.position AS position,
+                        client_periods.canonical_client_id AS canonical_client_id,
+                        client_periods.canonical_client_name AS canonical_client_name,
+                        client_periods.client_name AS client_name,
+                        client_periods.period_label AS period_label,
+                        client_periods.total_received_amount AS total_received_amount,
+                        client_periods.total_expected_amount AS total_expected_amount,
+                        client_periods.total_pending_amount AS total_pending_amount,
+                        client_periods.contract_count AS contract_count,
+                        client_periods.contract_labels_json AS contract_labels_json
+                    FROM finance_client_periods AS client_periods
+                    JOIN finance_analysis_snapshots AS snapshots ON snapshots.id = client_periods.snapshot_id
+                    LEFT JOIN finance_periods AS periods
+                      ON periods.snapshot_id = client_periods.snapshot_id
+                     AND periods.period_label = client_periods.period_label
+                    WHERE snapshots.analysis_id = :analysis_id
+                      AND (:canonical_client_id IS NULL OR client_periods.canonical_client_id = :canonical_client_id)
+                      AND (
+                        :client_name IS NULL
+                        OR LOWER(COALESCE(client_periods.canonical_client_name, client_periods.client_name)) = LOWER(:client_name)
+                        OR LOWER(client_periods.client_name) = LOWER(:client_name)
+                      )
+                    ORDER BY COALESCE(periods.position, client_periods.position) ASC, client_periods.position ASC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "analysis_id": analysis_id,
+                    "canonical_client_id": int(canonical_client_id) if canonical_client_id is not None else None,
+                    "client_name": client_name.strip() if client_name else None,
+                    "limit": int(limit),
+                },
+            ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def list_contract_period_timeline(
+        self,
+        analysis_id: int,
+        canonical_contract_id: Optional[int] = None,
+        contract_label: Optional[str] = None,
+        limit: int = 24,
+    ) -> list[dict[str, object]]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT
+                        snapshots.analysis_id AS analysis_id,
+                        COALESCE(periods.position, 999999) AS period_position,
+                        entries.canonical_contract_id AS canonical_contract_id,
+                        entries.canonical_contract_name AS canonical_contract_name,
+                        entries.contract_label AS contract_label,
+                        entries.canonical_client_id AS canonical_client_id,
+                        entries.canonical_client_name AS canonical_client_name,
+                        entries.counterparty AS client_name,
+                        entries.period_label AS period_label,
+                        COUNT(*) AS entry_count,
+                        SUM(
+                            CASE
+                                WHEN entries.entry_type = 'receivable' THEN ABS(COALESCE(entries.amount, 0))
+                                ELSE 0
+                            END
+                        ) AS receivable_amount,
+                        SUM(ABS(COALESCE(entries.amount, 0))) AS gross_amount,
+                        SUM(
+                            CASE
+                                WHEN entries.reconciliation_status = 'matched' THEN 1
+                                ELSE 0
+                            END
+                        ) AS matched_entry_count,
+                        SUM(
+                            CASE
+                                WHEN entries.reconciliation_status = 'probable' THEN 1
+                                ELSE 0
+                            END
+                        ) AS probable_entry_count
+                    FROM finance_entries AS entries
+                    JOIN finance_analysis_snapshots AS snapshots ON snapshots.id = entries.snapshot_id
+                    LEFT JOIN finance_periods AS periods
+                      ON periods.snapshot_id = entries.snapshot_id
+                     AND periods.period_label = entries.period_label
+                    WHERE snapshots.analysis_id = :analysis_id
+                      AND entries.contract_label IS NOT NULL
+                      AND (:canonical_contract_id IS NULL OR entries.canonical_contract_id = :canonical_contract_id)
+                      AND (
+                        :contract_label IS NULL
+                        OR LOWER(COALESCE(entries.canonical_contract_name, entries.contract_label)) = LOWER(:contract_label)
+                        OR LOWER(entries.contract_label) = LOWER(:contract_label)
+                      )
+                    GROUP BY
+                        snapshots.analysis_id,
+                        COALESCE(periods.position, 999999),
+                        entries.canonical_contract_id,
+                        entries.canonical_contract_name,
+                        entries.contract_label,
+                        entries.canonical_client_id,
+                        entries.canonical_client_name,
+                        entries.counterparty,
+                        entries.period_label
+                    ORDER BY COALESCE(periods.position, 999999) ASC, entries.period_label ASC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "analysis_id": analysis_id,
+                    "canonical_contract_id": int(canonical_contract_id) if canonical_contract_id is not None else None,
+                    "contract_label": contract_label.strip() if contract_label else None,
+                    "limit": int(limit),
+                },
             ).mappings().all()
         return [dict(row) for row in rows]
 

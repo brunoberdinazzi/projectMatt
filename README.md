@@ -234,6 +234,9 @@ Start from:
 cp .env.example .env
 ```
 
+For local password-reset testing, you can keep `DRAUX_EXPOSE_RESET_TOKEN=1` in `.env`. In production or shared
+environments, leave that flag disabled so the reset token is never exposed in the API response.
+
 If you use Colima instead of Docker Desktop, the local PostgreSQL path is:
 
 ```bash
@@ -330,7 +333,22 @@ The repository now includes:
 - `docker-compose.postgres.local.yml` for loopback-only PostgreSQL;
 - `scripts/start_local_postgres.sh` to detect `docker compose`/`docker-compose` and start the local PostgreSQL service;
 - `scripts/backup_postgres.sh` for dumps in custom format, with optional OpenSSL encryption;
+- `scripts/backfill_financial_warehouse.py` to rebuild missing financial snapshots in the canonical warehouse;
 - `docs/deploy-postgres-debian.md` with a step-by-step path for moving from the Mac to a Debian host.
+
+To backfill the warehouse locally after migrating or reopening old analyses:
+
+```bash
+set -a && source .env && set +a
+./.venv/bin/python scripts/backfill_financial_warehouse.py --limit 200
+```
+
+For a single analysis:
+
+```bash
+set -a && source .env && set +a
+./.venv/bin/python scripts/backfill_financial_warehouse.py --analysis-id 123
+```
 
 ### Financial analytical views
 
@@ -346,6 +364,10 @@ These views are useful for:
 - top contracts by accumulated yield;
 - best and worst periods by net result;
 - dashboards and deterministic report sections without relying on AI for the numbers.
+
+When a financial analysis is reopened, the API now tries to rehydrate a canonical warehouse overview on top of the
+stored payload. That overview feeds the prompt, the review screen and the financial report with database-backed top
+clients, top contracts and top periods.
 
 The database currently keeps:
 
@@ -380,6 +402,8 @@ The database currently keeps:
 - `GET /auth/me`
 - `PUT /auth/profile`
 - `POST /auth/password`
+- `POST /auth/password/forgot`
+- `POST /auth/password/reset`
 
 The scraper endpoint also accepts:
 
@@ -391,9 +415,11 @@ The scraper endpoint also accepts:
 - `POST /analysis/intake`
 - `POST /analysis/review`
 - `GET /analysis/{analysis_id}`
+- `POST /analysis/{analysis_id}/warehouse/sync`
 - `POST /analysis/{analysis_id}/scrape`
 - `GET /analysis/{analysis_id}/context`
 - `GET /analysis/{analysis_id}/generations`
+- `POST /analyses/warehouse/backfill`
 - `POST /analysis/{analysis_id}/report`
 
 ### Workbook and report pipeline

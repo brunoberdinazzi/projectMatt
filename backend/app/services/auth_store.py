@@ -102,6 +102,64 @@ class AuthStore:
             )
             conn.commit()
 
+    def create_password_reset(self, user_id: int, token_hash: str, expires_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO auth_password_resets (user_id, token_hash, expires_at)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, token_hash, expires_at),
+            )
+            conn.commit()
+
+    def get_password_reset_by_token_hash(self, token_hash: str) -> Optional[DatabaseRow]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, user_id, token_hash, expires_at, used_at, created_at
+                FROM auth_password_resets
+                WHERE token_hash = ?
+                """,
+                (token_hash,),
+            ).fetchone()
+
+    def mark_password_reset_used(self, reset_id: int, used_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE auth_password_resets
+                SET used_at = COALESCE(used_at, ?)
+                WHERE id = ?
+                """,
+                (used_at, reset_id),
+            )
+            conn.commit()
+
+    def revoke_expired_password_resets(self, now_iso: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE auth_password_resets
+                SET used_at = COALESCE(used_at, ?)
+                WHERE expires_at <= ? AND used_at IS NULL
+                """,
+                (now_iso, now_iso),
+            )
+            conn.commit()
+
+    def revoke_password_resets_for_user(self, user_id: int, used_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE auth_password_resets
+                SET used_at = COALESCE(used_at, ?)
+                WHERE user_id = ? AND used_at IS NULL
+                """,
+                (used_at, user_id),
+            )
+            conn.commit()
+
     def get_session_by_token_hash(self, token_hash: str) -> Optional[DatabaseRow]:
         with self._connect() as conn:
             return conn.execute(
@@ -187,8 +245,21 @@ class AuthStore:
                     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS auth_password_resets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    user_id INTEGER NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_hash);
                 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
+                CREATE INDEX IF NOT EXISTS idx_auth_password_resets_token_hash ON auth_password_resets(token_hash);
+                CREATE INDEX IF NOT EXISTS idx_auth_password_resets_user_id ON auth_password_resets(user_id);
+                CREATE INDEX IF NOT EXISTS idx_auth_password_resets_expires_at ON auth_password_resets(expires_at);
                 """
             )
             self._ensure_column(conn, "auth_sessions", "session_public_id", "TEXT")

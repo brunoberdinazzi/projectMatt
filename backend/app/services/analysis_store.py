@@ -611,6 +611,36 @@ class AnalysisStore:
 
         return analyses
 
+    def list_financial_analysis_refs(
+        self,
+        limit: int = 200,
+        owner_user_id: Optional[int] = None,
+        after_analysis_id: int = 0,
+    ) -> list[dict[str, Optional[int]]]:
+        with self._connect() as conn:
+            query = """
+                SELECT id, created_by_user_id
+                FROM analyses
+                WHERE id > ?
+                  AND financial_analysis_json IS NOT NULL
+                  AND financial_analysis_json <> ''
+            """
+            parameters: list[object] = [int(after_analysis_id)]
+            if owner_user_id is not None:
+                query += " AND created_by_user_id = ?"
+                parameters.append(int(owner_user_id))
+            query += " ORDER BY id ASC LIMIT ?"
+            parameters.append(int(limit))
+            rows = conn.execute(query, tuple(parameters)).fetchall()
+
+        return [
+            {
+                "analysis_id": int(row["id"]),
+                "owner_user_id": int(row["created_by_user_id"]) if row["created_by_user_id"] is not None else None,
+            }
+            for row in rows
+        ]
+
     def get_analysis(self, analysis_id: int, owner_user_id: Optional[int] = None) -> Optional[ChecklistParseResult]:
         with self._connect() as conn:
             if owner_user_id is None:

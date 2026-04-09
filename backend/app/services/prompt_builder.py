@@ -163,6 +163,27 @@ class PromptBuilder:
         if payload.database_summary:
             lines.extend(["Resumo persistido no banco:", payload.database_summary, ""])
 
+        if payload.warehouse_overview and payload.warehouse_overview.snapshot_available:
+            lines.extend(
+                [
+                    "Resumo canônico do warehouse:",
+                    f"- clientes={payload.warehouse_overview.client_count} | contratos={payload.warehouse_overview.contract_count} | periodos={payload.warehouse_overview.period_count} | lancamentos={payload.warehouse_overview.entry_count}",
+                ]
+            )
+            for client in payload.warehouse_overview.top_clients[:5]:
+                lines.append(
+                    f"- top_cliente={client.client_name} | rendimento={self._format_currency(client.total_received_amount)} | previsto={self._format_currency(client.total_expected_amount)} | pendente={self._format_currency(client.total_pending_amount)} | contratos={client.contract_count}"
+                )
+            for contract in payload.warehouse_overview.top_contracts[:5]:
+                lines.append(
+                    f"- top_contrato={contract.contract_label} | cliente={contract.client_name or '-'} | recebido={self._format_currency(contract.total_received_amount)} | previsto={self._format_currency(contract.total_expected_amount)} | pendente={self._format_currency(contract.total_pending_amount)}"
+                )
+            for period in payload.warehouse_overview.top_periods[:3]:
+                lines.append(
+                    f"- top_periodo={period.period_label} | resultado={self._format_currency(period.net_result)} | receita={self._format_currency(period.gross_revenue_total)} | custos={self._format_currency(period.global_expenses_total)} | pendencias={period.pending_entry_count}"
+                )
+            lines.append("")
+
         for line in analysis.dre_lines:
             suffix = ""
             if line.share_of_gross_revenue is not None:

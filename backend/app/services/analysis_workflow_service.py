@@ -20,6 +20,8 @@ from ..models import (
     AnalysisReviewStats,
     ChecklistParseResult,
     FinancialEntryTraceItem,
+    FinancialWarehouseBackfillResponse,
+    FinancialWarehouseSyncResponse,
     GenerationTrace,
     StoredAnalysisResponse,
 )
@@ -241,12 +243,16 @@ class AnalysisWorkflowService:
         analysis_id: int,
         owner_user_id: Optional[int] = None,
     ) -> ChecklistParseResult:
-        parsed = self.analysis_store.get_analysis(analysis_id, owner_user_id=owner_user_id)
-        if parsed is None:
-            raise HTTPException(status_code=404, detail="Analise nao encontrada.")
+        parsed = self._load_stored_analysis_or_404(analysis_id, owner_user_id=owner_user_id)
+        parsed, _synced = self._ensure_financial_warehouse_snapshot(
+            analysis_id,
+            parsed,
+            owner_user_id=owner_user_id,
+        )
         if parsed.financial_analysis is not None:
             parsed = self._rehydrate_financial_analysis_from_warehouse(analysis_id, parsed)
             parsed.database_summary = self._build_database_backed_summary(analysis_id, parsed)
+            parsed.warehouse_overview = self._build_financial_warehouse_overview(analysis_id)
         return parsed
 
     def create_intake(
@@ -264,6 +270,7 @@ class AnalysisWorkflowService:
         )
         parsed.analysis_id = analysis_id
         self._sync_financial_warehouse(analysis_id, parsed, owner_user_id=owner_user_id)
+        parsed.warehouse_overview = self._build_financial_warehouse_overview(analysis_id)
         parsed.database_summary = self._build_database_backed_summary(analysis_id, parsed)
         self.analysis_store.set_database_summary(analysis_id, parsed.database_summary)
         return StoredAnalysisResponse(analysis_id=analysis_id, parsed=parsed)
@@ -287,6 +294,7 @@ class AnalysisWorkflowService:
         parsed.analysis_id = analysis_id
         self.analysis_store.update_analysis(analysis_id, parsed, session_public_id=session_public_id)
         self._sync_financial_warehouse(analysis_id, parsed, owner_user_id=owner_user_id)
+        parsed.warehouse_overview = self._build_financial_warehouse_overview(analysis_id)
         parsed.database_summary = self._build_database_backed_summary(analysis_id, parsed)
         self.analysis_store.set_database_summary(analysis_id, parsed.database_summary)
         return self.build_review_response(analysis_id, parsed, scrape_duration_ms=scrape_duration_ms)
@@ -318,6 +326,7 @@ class AnalysisWorkflowService:
             session_public_id=session_public_id,
         )
         self._sync_financial_warehouse(analysis_id, parsed, owner_user_id=owner_user_id)
+        parsed.warehouse_overview = self._build_financial_warehouse_overview(analysis_id)
         parsed.database_summary = self._build_database_backed_summary(analysis_id, parsed)
         self.analysis_store.set_database_summary(analysis_id, parsed.database_summary)
         return analysis_id
@@ -331,6 +340,7 @@ class AnalysisWorkflowService:
         parsed.scraped_pages = self.analysis_scrape_service.scrape_pages_for_analysis(parsed)
         self.analysis_store.update_analysis(analysis_id, parsed, session_public_id=session_public_id)
         self._sync_financial_warehouse(analysis_id, parsed)
+        parsed.warehouse_overview = self._build_financial_warehouse_overview(analysis_id)
         parsed.database_summary = self._build_database_backed_summary(analysis_id, parsed)
         self.analysis_store.set_database_summary(analysis_id, parsed.database_summary)
         return StoredAnalysisResponse(analysis_id=analysis_id, parsed=parsed)
@@ -371,6 +381,111 @@ class AnalysisWorkflowService:
             self.analysis_store.set_database_summary(analysis_id, summary)
         return AnalysisContextResponse(analysis_id=analysis_id, summary=summary)
 
+    def sync_financial_warehouse_snapshot(
+        self,
+        analysis_id: int,
+        owner_user_id: Optional[int] = None,
+        force: bool = True,
+    ) -> FinancialWarehouseSyncResponse:
+        parsed = self._load_stored_analysis_or_404(analysis_id, owner_user_id=owner_user_id)
+        if parsed.financial_analysis is None:
+            return FinancialWarehouseSyncResponse(
+                analysis_id=analysis_id,
+                synced=False,
+                snapshot_available=False,
+                source="unavailable",
+                message="A analise nao possui payload financeiro para sincronizacao no warehouse.",
+            )
+        if self.financial_warehouse_store is None:
+            return FinancialWarehouseSyncResponse(
+                analysis_id=analysis_id,
+                synced=False,
+                snapshot_available=False,
+                source="unavailable",
+                message="O warehouse financeiro nao esta disponivel neste ambiente.",
+            )
+
+        parsed, synced = self._ensure_financial_warehouse_snapshot(
+            analysis_id,
+            parsed,
+            owner_user_id=owner_user_id,
+            force=force,
+        )
+        snapshot_available = self.financial_warehouse_store.has_snapshot(analysis_id)
+        if snapshot_available:
+            parsed = self._rehydrate_financial_analysis_from_warehouse(analysis_id, parsed)
+            parsed.warehouse_overview = self._build_financial_warehouse_overview(analysis_id)
+            parsed.database_summary = self._build_database_backed_summary(analysis_id, parsed)
+            self.analysis_store.set_database_summary(analysis_id, parsed.database_summary)
+
+        return FinancialWarehouseSyncResponse(
+            analysis_id=analysis_id,
+            synced=synced,
+            snapshot_available=snapshot_available,
+            source="backfilled" if synced else ("existing" if snapshot_available else "unavailable"),
+            database_summary=parsed.database_summary,
+            message=(
+                "Snapshot financeiro sincronizado com o warehouse."
+                if synced
+                else (
+                    "Snapshot financeiro ja estava disponivel no warehouse."
+                    if snapshot_available
+                    else "Nao foi possivel sincronizar o snapshot financeiro."
+                )
+            ),
+        )
+
+    def backfill_financial_warehouse_snapshots(
+        self,
+        owner_user_id: Optional[int] = None,
+        limit: int = 200,
+        force: bool = False,
+    ) -> FinancialWarehouseBackfillResponse:
+        processed_count = 0
+        synced_count = 0
+        skipped_count = 0
+        analysis_ids: list[int] = []
+        last_analysis_id = 0
+
+        while processed_count < limit:
+            batch_limit = min(100, limit - processed_count)
+            refs = self.analysis_store.list_financial_analysis_refs(
+                limit=batch_limit,
+                owner_user_id=owner_user_id,
+                after_analysis_id=last_analysis_id,
+            )
+            if not refs:
+                break
+
+            for ref in refs:
+                analysis_id = int(ref["analysis_id"])
+                last_analysis_id = analysis_id
+                processed_count += 1
+                effective_owner_user_id = owner_user_id if owner_user_id is not None else ref["owner_user_id"]
+
+                try:
+                    result = self.sync_financial_warehouse_snapshot(
+                        analysis_id=analysis_id,
+                        owner_user_id=effective_owner_user_id,
+                        force=force,
+                    )
+                except HTTPException:
+                    skipped_count += 1
+                    continue
+
+                if result.synced:
+                    synced_count += 1
+                    analysis_ids.append(analysis_id)
+                else:
+                    skipped_count += 1
+
+        return FinancialWarehouseBackfillResponse(
+            processed_count=processed_count,
+            synced_count=synced_count,
+            skipped_count=skipped_count,
+            analysis_ids=analysis_ids,
+        )
+
     def list_generations(self, analysis_id: int, owner_user_id: Optional[int] = None) -> list[GenerationTrace]:
         self.get_analysis_or_404(analysis_id, owner_user_id=owner_user_id)
         return self.analysis_store.list_generations(analysis_id)
@@ -390,6 +505,11 @@ class AnalysisWorkflowService:
         parsed = self.get_analysis_or_404(analysis_id, owner_user_id=owner_user_id)
         if parsed.financial_analysis is None or self.financial_warehouse_store is None:
             return []
+        parsed, _synced = self._ensure_financial_warehouse_snapshot(
+            analysis_id,
+            parsed,
+            owner_user_id=owner_user_id,
+        )
         try:
             rows = self.financial_warehouse_store.list_entries(
                 analysis_id,
@@ -405,6 +525,16 @@ class AnalysisWorkflowService:
             LOGGER.exception("Falha ao consultar lancamentos financeiros da analise %s.", analysis_id)
             return []
         return [FinancialEntryTraceItem.model_validate(row) for row in rows]
+
+    def _load_stored_analysis_or_404(
+        self,
+        analysis_id: int,
+        owner_user_id: Optional[int] = None,
+    ) -> ChecklistParseResult:
+        parsed = self.analysis_store.get_analysis(analysis_id, owner_user_id=owner_user_id)
+        if parsed is None:
+            raise HTTPException(status_code=404, detail="Analise nao encontrada.")
+        return parsed
 
     def _hash_workbook(self, workbook_path: Path) -> str:
         digest = hashlib.sha256()
@@ -459,6 +589,40 @@ class AnalysisWorkflowService:
         except Exception:
             LOGGER.exception("Falha ao resumir a analise %s a partir do warehouse financeiro.", analysis_id)
             return None
+
+    def _build_financial_warehouse_overview(self, analysis_id: int):
+        if self.financial_warehouse_store is None:
+            return None
+        try:
+            return self.financial_warehouse_store.build_analysis_overview(analysis_id)
+        except Exception:
+            LOGGER.exception("Falha ao construir o overview do warehouse financeiro da analise %s.", analysis_id)
+            return None
+
+    def _ensure_financial_warehouse_snapshot(
+        self,
+        analysis_id: int,
+        parsed: ChecklistParseResult,
+        owner_user_id: Optional[int] = None,
+        force: bool = False,
+    ) -> tuple[ChecklistParseResult, bool]:
+        if parsed.financial_analysis is None or self.financial_warehouse_store is None:
+            return parsed, False
+
+        if not force:
+            try:
+                if self.financial_warehouse_store.has_snapshot(analysis_id):
+                    return parsed, False
+            except Exception:
+                LOGGER.exception("Falha ao verificar snapshot financeiro da analise %s.", analysis_id)
+
+        self._sync_financial_warehouse(analysis_id, parsed, owner_user_id=owner_user_id)
+
+        try:
+            return parsed, self.financial_warehouse_store.has_snapshot(analysis_id)
+        except Exception:
+            LOGGER.exception("Falha ao confirmar snapshot financeiro da analise %s.", analysis_id)
+            return parsed, False
 
     def _load_reconciliation_alias_registry(self, owner_user_id: Optional[int]) -> dict[str, dict[str, set[str]]]:
         if self.financial_warehouse_store is None:

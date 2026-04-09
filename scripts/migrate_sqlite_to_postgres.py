@@ -20,6 +20,7 @@ from backend.app.services.financial_warehouse_store import FinancialWarehouseSto
 APP_TABLES_IN_ORDER = [
     "auth_users",
     "auth_sessions",
+    "auth_password_resets",
     "analyses",
     "analysis_warnings",
     "analysis_items",

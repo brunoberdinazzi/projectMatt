@@ -49,10 +49,12 @@ import type {
   AnalysisReviewResponse,
   AsyncDataState,
   AsyncItemsState,
+  AuthPasswordForgotResponse,
   FinancialAliasCatalogResponse,
   FinancialAliasItem,
   FinancialAliasKind,
   AuthSessionResponse,
+  ForgotPasswordForm,
   GenerationTraceItem,
   LoginForm,
   OllamaModelsResponse,
@@ -60,6 +62,7 @@ import type {
   ParserDetectionState,
   ParserProfileDefinition,
   RegisterForm,
+  ResetPasswordForm,
   ScrapePageResult,
   SessionState,
   StatusFeedback,
@@ -81,7 +84,7 @@ const ReviewPanel = lazy(() =>
   import("./components/review-panel").then((module) => ({ default: module.ReviewPanel }))
 );
 
-type AuthMode = "login" | "register";
+type AuthMode = "login" | "register" | "forgot" | "reset";
 type WorkspaceChannel = "status" | "scrape";
 type ActiveScrapeTab = "links" | "pages" | "warnings";
 
@@ -151,6 +154,14 @@ export default function App() {
     fullName: "",
     email: "",
     password: "",
+  });
+  const [forgotPasswordForm, setForgotPasswordForm] = useState<ForgotPasswordForm>({
+    email: "",
+  });
+  const [resetPasswordForm, setResetPasswordForm] = useState<ResetPasswordForm>({
+    token: "",
+    newPassword: "",
+    confirmPassword: "",
   });
   const [accountProfileForm, setAccountProfileForm] = useState<AccountProfileForm>({
     fullName: "",
@@ -307,6 +318,8 @@ export default function App() {
     setAliasFeedback({ message: "", error: false });
     setAccountProfileForm({ fullName: "", email: "" });
     setAccountPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    setForgotPasswordForm({ email: "" });
+    setResetPasswordForm({ token: "", newPassword: "", confirmPassword: "" });
     setAccountProfileFeedback({ message: "", error: false });
     setAccountPasswordFeedback({ message: "", error: false });
     setIsSavingAccountProfile(false);
@@ -1175,6 +1188,129 @@ export default function App() {
     }
   }
 
+  function handleAuthModeChange(mode: AuthMode): void {
+    setAuthMode(mode);
+    setAuthFeedback({ message: "", error: false });
+
+    if (mode === "forgot") {
+      setForgotPasswordForm((current) => ({
+        email: current.email || loginForm.email || registerForm.email,
+      }));
+    }
+
+    if (mode !== "reset") {
+      setResetPasswordForm((current) => ({
+        token: mode === "login" ? "" : current.token,
+        newPassword: "",
+        confirmPassword: "",
+      }));
+    }
+  }
+
+  async function handleForgotPasswordSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setIsSubmittingAuth(true);
+    setAuthFeedback({ message: "", error: false });
+
+    try {
+      const response = await fetch("/auth/password/forgot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: forgotPasswordForm.email,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await extractError(response));
+      }
+
+      const payload = (await response.json()) as AuthPasswordForgotResponse;
+      if (payload.reset_token) {
+        setResetPasswordForm({
+          token: payload.reset_token,
+          newPassword: "",
+          confirmPassword: "",
+        });
+        setAuthMode("reset");
+        setAuthFeedback({
+          message: payload.expires_at
+            ? `Fluxo de teste preparado. O token foi preenchido automaticamente e expira em ${payload.expires_at}.`
+            : "Fluxo de teste preparado. O token foi preenchido automaticamente para a redefinição.",
+          error: false,
+        });
+      } else {
+        setAuthFeedback({
+          message:
+            payload.message ||
+            "Se o e-mail existir, o fluxo de redefinição foi preparado. Em produção, isso seguiria por e-mail.",
+          error: false,
+        });
+      }
+    } catch (error) {
+      setAuthFeedback({
+        message: toErrorMessage(error, "Não foi possível preparar a redefinição de senha."),
+        error: true,
+      });
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  }
+
+  async function handleResetPasswordSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setIsSubmittingAuth(true);
+    setAuthFeedback({ message: "", error: false });
+
+    if (resetPasswordForm.newPassword !== resetPasswordForm.confirmPassword) {
+      setAuthFeedback({
+        message: "A confirmação da nova senha precisa ser igual ao novo valor.",
+        error: true,
+      });
+      setIsSubmittingAuth(false);
+      return;
+    }
+
+    try {
+      const response = await fetch("/auth/password/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          token: resetPasswordForm.token,
+          new_password: resetPasswordForm.newPassword,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await extractError(response));
+      }
+
+      setResetPasswordForm({
+        token: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setForgotPasswordForm({
+        email: "",
+      });
+      setLoginForm((current) => ({
+        ...current,
+        email: forgotPasswordForm.email || current.email,
+        password: "",
+      }));
+      setAuthMode("login");
+      setAuthFeedback({
+        message: "Senha redefinida com sucesso. Faça login com o novo valor.",
+        error: false,
+      });
+    } catch (error) {
+      setAuthFeedback({
+        message: toErrorMessage(error, "Não foi possível redefinir a senha."),
+        error: true,
+      });
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  }
+
   async function handleLogout(): Promise<void> {
     setIsLoggingOut(true);
     try {
@@ -1383,17 +1519,27 @@ export default function App() {
     return (
       <MarketingAuthShell
         authMode={authMode}
-        onAuthModeChange={(mode: AuthMode) => setAuthMode(mode)}
+        onAuthModeChange={handleAuthModeChange}
         loginForm={loginForm}
         registerForm={registerForm}
+        forgotPasswordForm={forgotPasswordForm}
+        resetPasswordForm={resetPasswordForm}
         onLoginFieldChange={(field: keyof LoginForm, value: string) =>
           setLoginForm((current) => ({ ...current, [field]: value }))
         }
         onRegisterFieldChange={(field: keyof RegisterForm, value: string) =>
           setRegisterForm((current) => ({ ...current, [field]: value }))
         }
+        onForgotPasswordFieldChange={(field: keyof ForgotPasswordForm, value: string) =>
+          setForgotPasswordForm((current) => ({ ...current, [field]: value }))
+        }
+        onResetPasswordFieldChange={(field: keyof ResetPasswordForm, value: string) =>
+          setResetPasswordForm((current) => ({ ...current, [field]: value }))
+        }
         onLoginSubmit={handleLoginSubmit}
         onRegisterSubmit={handleRegisterSubmit}
+        onForgotPasswordSubmit={handleForgotPasswordSubmit}
+        onResetPasswordSubmit={handleResetPasswordSubmit}
         authFeedback={authFeedback}
         sessionError={sessionState.error}
         authLoading={isSubmittingAuth}

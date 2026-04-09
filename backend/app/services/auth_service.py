@@ -13,7 +13,12 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from fastapi import HTTPException, Request, Response
 
-from ..models import AuthSessionInfo, AuthSessionResponse, AuthUserResponse
+from ..models import (
+    AuthPasswordForgotResponse,
+    AuthSessionInfo,
+    AuthSessionResponse,
+    AuthUserResponse,
+)
 from .auth_store import AuthStore
 
 
@@ -43,10 +48,12 @@ class AuthService:
         self.auth_store = auth_store
         self.cookie_name = cookie_name or os.getenv("AUTH_COOKIE_NAME", "draux_session")
         self.session_ttl_hours = session_ttl_hours or int(os.getenv("AUTH_SESSION_TTL_HOURS", "168"))
+        self.password_reset_ttl_minutes = int(os.getenv("AUTH_PASSWORD_RESET_TTL_MINUTES", "30"))
         env_secure = os.getenv("AUTH_COOKIE_SECURE", "").strip().lower()
         self.cookie_secure_override = cookie_secure if cookie_secure is not None else (
             env_secure in {"1", "true", "yes"} if env_secure else None
         )
+        self.expose_reset_token = os.getenv("DRAUX_EXPOSE_RESET_TOKEN", "").strip().lower() in {"1", "true", "yes"}
         self.password_hasher = PasswordHasher(
             time_cost=3,
             memory_cost=65536,
@@ -129,6 +136,56 @@ class AuthService:
         if response is None:
             return None
         return self.create_session(response, self._row_to_user(user_row), request=request)
+
+    def forgot_password(self, email: str) -> AuthPasswordForgotResponse:
+        normalized_email = self._normalize_email(email)
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        self.auth_store.revoke_expired_password_resets(now_iso)
+
+        reset_token: Optional[str] = None
+        expires_at_iso: Optional[str] = None
+        user_row = self.auth_store.get_user_by_email(normalized_email)
+        if user_row is not None:
+            user_id = int(user_row["id"])
+            expires_at = now + timedelta(minutes=self.password_reset_ttl_minutes)
+            expires_at_iso = expires_at.isoformat()
+            reset_token = f"rst_{secrets.token_urlsafe(24)}"
+            self.auth_store.revoke_password_resets_for_user(user_id=user_id, used_at=now_iso)
+            self.auth_store.create_password_reset(
+                user_id=user_id,
+                token_hash=self._hash_token(reset_token),
+                expires_at=expires_at_iso,
+            )
+
+        return AuthPasswordForgotResponse(
+            ok=True,
+            message=(
+                "Se o e-mail existir, um fluxo de redefinicao foi preparado. "
+                "Em ambiente local de teste, o token pode ser exposto na resposta."
+            ),
+            reset_token=reset_token if reset_token and self.expose_reset_token else None,
+            expires_at=expires_at_iso if reset_token and self.expose_reset_token else None,
+        )
+
+    def reset_password(self, token: str, new_password: str) -> None:
+        normalized_token = (token or "").strip()
+        if len(normalized_token) < 12:
+            raise HTTPException(status_code=400, detail="O token de redefinicao informado e invalido.")
+
+        self._validate_password(new_password)
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        self.auth_store.revoke_expired_password_resets(now_iso)
+        reset_row = self.auth_store.get_password_reset_by_token_hash(self._hash_token(normalized_token))
+        if reset_row is None or reset_row["used_at"] or (reset_row["expires_at"] or "") <= now_iso:
+            raise HTTPException(status_code=400, detail="O token de redefinicao e invalido ou expirou.")
+
+        user_id = int(reset_row["user_id"])
+        self.auth_store.update_user_password(user_id=user_id, password_hash=self._hash_password(new_password))
+        self.auth_store.revoke_sessions_for_user(user_id=user_id, revoked_at=now_iso)
+        self.auth_store.mark_password_reset_used(reset_id=int(reset_row["id"]), used_at=now_iso)
+        self.auth_store.revoke_password_resets_for_user(user_id=user_id, used_at=now_iso)
 
     def create_session(
         self,

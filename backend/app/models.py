@@ -112,6 +112,22 @@ class AuthPasswordUpdateRequest(BaseModel):
     new_password: str
 
 
+class AuthPasswordForgotRequest(BaseModel):
+    email: str
+
+
+class AuthPasswordForgotResponse(BaseModel):
+    ok: bool = True
+    message: Optional[str] = None
+    reset_token: Optional[str] = None
+    expires_at: Optional[str] = None
+
+
+class AuthPasswordResetRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 class AuthUserResponse(BaseModel):
     id: int
     full_name: str
@@ -321,6 +337,45 @@ class FinancialAnalysisResult(BaseModel):
     entry_count: int = 0
 
 
+class FinancialWarehouseTopClient(BaseModel):
+    canonical_client_id: Optional[int] = None
+    client_name: str
+    total_received_amount: float = 0.0
+    total_expected_amount: float = 0.0
+    total_pending_amount: float = 0.0
+    contract_count: int = 0
+
+
+class FinancialWarehouseTopContract(BaseModel):
+    canonical_contract_id: Optional[int] = None
+    contract_label: str
+    client_name: Optional[str] = None
+    total_received_amount: float = 0.0
+    total_expected_amount: float = 0.0
+    total_pending_amount: float = 0.0
+    entry_count: int = 0
+
+
+class FinancialWarehouseTopPeriod(BaseModel):
+    period_label: str
+    net_result: float = 0.0
+    gross_revenue_total: float = 0.0
+    global_expenses_total: float = 0.0
+    pending_entry_count: int = 0
+
+
+class FinancialWarehouseOverview(BaseModel):
+    analysis_id: int
+    snapshot_available: bool = False
+    entry_count: int = 0
+    client_count: int = 0
+    contract_count: int = 0
+    period_count: int = 0
+    top_clients: list[FinancialWarehouseTopClient] = Field(default_factory=list)
+    top_contracts: list[FinancialWarehouseTopContract] = Field(default_factory=list)
+    top_periods: list[FinancialWarehouseTopPeriod] = Field(default_factory=list)
+
+
 class ChecklistParseResult(BaseModel):
     analysis_id: Optional[int] = None
     orgao: Optional[str] = None
@@ -346,6 +401,7 @@ class ChecklistParseResult(BaseModel):
     context_layers: list[WorkbookContextLayer] = Field(default_factory=list)
     reference_links: list[WorkbookReferenceLink] = Field(default_factory=list)
     financial_analysis: Optional[FinancialAnalysisResult] = None
+    warehouse_overview: Optional[FinancialWarehouseOverview] = None
     parse_cache_hit: bool = False
     parse_duration_ms: Optional[int] = None
     parse_cache_saved_ms: Optional[int] = None
@@ -424,6 +480,22 @@ class AnalysisListItem(BaseModel):
 class AnalysisContextResponse(BaseModel):
     analysis_id: int
     summary: str
+
+
+class FinancialWarehouseSyncResponse(BaseModel):
+    analysis_id: int
+    synced: bool = False
+    snapshot_available: bool = False
+    source: Literal["existing", "backfilled", "unavailable"] = "unavailable"
+    database_summary: Optional[str] = None
+    message: Optional[str] = None
+
+
+class FinancialWarehouseBackfillResponse(BaseModel):
+    processed_count: int = 0
+    synced_count: int = 0
+    skipped_count: int = 0
+    analysis_ids: list[int] = Field(default_factory=list)
 
 
 class FinancialAliasItem(BaseModel):

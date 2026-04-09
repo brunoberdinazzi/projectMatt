@@ -80,10 +80,16 @@ export function MarketingAuthShell({
   onAuthModeChange,
   loginForm,
   registerForm,
+  forgotPasswordForm,
+  resetPasswordForm,
   onLoginFieldChange,
   onRegisterFieldChange,
+  onForgotPasswordFieldChange,
+  onResetPasswordFieldChange,
   onLoginSubmit,
   onRegisterSubmit,
+  onForgotPasswordSubmit,
+  onResetPasswordSubmit,
   authFeedback,
   sessionError,
   authLoading,
@@ -183,7 +189,7 @@ export function MarketingAuthShell({
 
             <div className="site-auth-tabs" role="tablist" aria-label="Escolha o modo de autenticação">
               <button
-                className={`site-auth-tab ${authMode === "login" ? "site-auth-tab-active" : ""}`}
+                className={`site-auth-tab ${authMode === "login" || authMode === "forgot" || authMode === "reset" ? "site-auth-tab-active" : ""}`}
                 type="button"
                 onClick={() => onAuthModeChange("login")}
               >
@@ -220,6 +226,81 @@ export function MarketingAuthShell({
                 />
                 <button className="action-button site-auth-submit" type="submit" disabled={authLoading}>
                   {authLoading ? "Entrando..." : "Entrar na plataforma"}
+                </button>
+                <button
+                  className="text-action-button"
+                  type="button"
+                  onClick={() => onAuthModeChange("forgot")}
+                  disabled={authLoading}
+                >
+                  Esqueci minha senha
+                </button>
+              </form>
+            ) : authMode === "forgot" ? (
+              <form className="site-auth-form" onSubmit={onForgotPasswordSubmit}>
+                <TextField
+                  label="E-mail da conta"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="voce@empresa.com"
+                  value={forgotPasswordForm.email}
+                  onChange={(event) => onForgotPasswordFieldChange("email", event.target.value)}
+                />
+                <button className="action-button site-auth-submit" type="submit" disabled={authLoading}>
+                  {authLoading ? "Preparando..." : "Preparar redefinição"}
+                </button>
+                <p className="site-auth-support-copy">
+                  Em ambiente local, o token de teste pode voltar na resposta e preencher a próxima etapa
+                  automaticamente.
+                </p>
+                <button
+                  className="text-action-button"
+                  type="button"
+                  onClick={() => onAuthModeChange("login")}
+                  disabled={authLoading}
+                >
+                  Voltar para o login
+                </button>
+              </form>
+            ) : authMode === "reset" ? (
+              <form className="site-auth-form" onSubmit={onResetPasswordSubmit}>
+                <TextField
+                  label="Token de redefinição"
+                  autoComplete="one-time-code"
+                  placeholder="Cole o token recebido"
+                  value={resetPasswordForm.token}
+                  onChange={(event) => onResetPasswordFieldChange("token", event.target.value)}
+                />
+                <TextField
+                  label="Nova senha"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Mínimo de 8 caracteres"
+                  value={resetPasswordForm.newPassword}
+                  onChange={(event) => onResetPasswordFieldChange("newPassword", event.target.value)}
+                />
+                <TextField
+                  label="Confirmar nova senha"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Repita a nova senha"
+                  value={resetPasswordForm.confirmPassword}
+                  onChange={(event) => onResetPasswordFieldChange("confirmPassword", event.target.value)}
+                />
+                <button className="action-button site-auth-submit" type="submit" disabled={authLoading}>
+                  {authLoading ? "Redefinindo..." : "Redefinir senha"}
+                </button>
+                <p className="site-auth-support-copy">
+                  Use o token recebido no fluxo de teste local ou no e-mail de redefinição quando esse envio estiver
+                  conectado.
+                </p>
+                <button
+                  className="text-action-button"
+                  type="button"
+                  onClick={() => onAuthModeChange("login")}
+                  disabled={authLoading}
+                >
+                  Voltar para o login
                 </button>
               </form>
             ) : (

@@ -51,6 +51,16 @@ export interface RegisterForm {
   password: string;
 }
 
+export interface ForgotPasswordForm {
+  email: string;
+}
+
+export interface ResetPasswordForm {
+  token: string;
+  newPassword: string;
+  confirmPassword: string;
+}
+
 export interface AsyncItemsState<T> {
   loading: boolean;
   error: string;
@@ -85,6 +95,13 @@ export interface WorkspaceMetric {
 export interface StatusFeedback {
   message: string;
   error: boolean;
+}
+
+export interface AuthPasswordForgotResponse {
+  ok: boolean;
+  message?: string | null;
+  reset_token?: string | null;
+  expires_at?: string | null;
 }
 
 export interface ParserDetectionResponse {
@@ -307,6 +324,45 @@ export interface FinancialAnalysisResult {
   entry_count: number;
 }
 
+export interface FinancialWarehouseTopClient {
+  canonical_client_id?: number | null;
+  client_name: string;
+  total_received_amount: number;
+  total_expected_amount: number;
+  total_pending_amount: number;
+  contract_count: number;
+}
+
+export interface FinancialWarehouseTopContract {
+  canonical_contract_id?: number | null;
+  contract_label: string;
+  client_name?: string | null;
+  total_received_amount: number;
+  total_expected_amount: number;
+  total_pending_amount: number;
+  entry_count: number;
+}
+
+export interface FinancialWarehouseTopPeriod {
+  period_label: string;
+  net_result: number;
+  gross_revenue_total: number;
+  global_expenses_total: number;
+  pending_entry_count: number;
+}
+
+export interface FinancialWarehouseOverview {
+  analysis_id: number;
+  snapshot_available: boolean;
+  entry_count: number;
+  client_count: number;
+  contract_count: number;
+  period_count: number;
+  top_clients: FinancialWarehouseTopClient[];
+  top_contracts: FinancialWarehouseTopContract[];
+  top_periods: FinancialWarehouseTopPeriod[];
+}
+
 export interface ChecklistParseResult {
   analysis_id?: number | null;
   orgao?: string | null;
@@ -326,6 +382,7 @@ export interface ChecklistParseResult {
   context_layers?: WorkbookContextLayer[];
   reference_links?: WorkbookReferenceLink[];
   financial_analysis?: FinancialAnalysisResult | null;
+  warehouse_overview?: FinancialWarehouseOverview | null;
   scraped_pages?: ScrapedPageRecord[];
   warnings?: string[];
 }

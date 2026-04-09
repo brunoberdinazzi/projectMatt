@@ -3,6 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, Response
 
 from ..models import (
+    AuthPasswordForgotRequest,
+    AuthPasswordForgotResponse,
+    AuthPasswordResetRequest,
     AuthLoginRequest,
     AuthPasswordUpdateRequest,
     AuthProfileUpdateRequest,
@@ -17,19 +20,26 @@ router = APIRouter()
 
 
 def _throttle_auth_request(request: Request, action: str, email: str) -> None:
+    limits = {
+        "login": (20, 600, 10, 600),
+        "register": (8, 3600, 4, 3600),
+        "forgot": (8, 3600, 4, 3600),
+        "reset": (12, 3600, 6, 3600),
+    }
+    ip_limit, ip_window, email_limit, email_window = limits.get(action, (8, 3600, 4, 3600))
     client_ip = rate_limit_service.client_ip(request)
     normalized_email = (email or "").strip().lower()
     rate_limit_service.enforce(
         rate_limit_service.auth_bucket(action, "ip", client_ip),
-        limit=20 if action == "login" else 8,
-        window_seconds=600 if action == "login" else 3600,
+        limit=ip_limit,
+        window_seconds=ip_window,
         detail="Muitas tentativas seguidas. Aguarde um pouco antes de tentar novamente.",
     )
     if normalized_email:
         rate_limit_service.enforce(
             rate_limit_service.auth_bucket(action, "email", normalized_email),
-            limit=10 if action == "login" else 4,
-            window_seconds=600 if action == "login" else 3600,
+            limit=email_limit,
+            window_seconds=email_window,
             detail="Muitas tentativas seguidas para esta conta. Aguarde um pouco antes de tentar novamente.",
         )
 
@@ -92,4 +102,17 @@ def auth_change_password(
         response=response,
         request=request,
     )
+    return {"ok": True}
+
+
+@router.post("/auth/password/forgot", response_model=AuthPasswordForgotResponse, dependencies=[Depends(require_trusted_origin)])
+def auth_forgot_password(payload: AuthPasswordForgotRequest, request: Request) -> AuthPasswordForgotResponse:
+    _throttle_auth_request(request, "forgot", payload.email)
+    return auth_service.forgot_password(payload.email)
+
+
+@router.post("/auth/password/reset", dependencies=[Depends(require_trusted_origin)])
+def auth_reset_password(payload: AuthPasswordResetRequest, request: Request) -> dict[str, bool]:
+    _throttle_auth_request(request, "reset", payload.token)
+    auth_service.reset_password(token=payload.token, new_password=payload.new_password)
     return {"ok": True}
